@@ -12,6 +12,14 @@ body {
   @apply min-h-screen bg-plant-gradient text-slate-900 antialiased relative overflow-x-hidden;
 }
 
+body .aos-init {
+  opacity: 0;
+}
+
+body .aos-animate {
+  opacity: 1;
+}
+
 body::before,
 body::after {
   content: "";

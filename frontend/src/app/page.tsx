@@ -8,7 +8,10 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-10 px-4 pb-16 pt-8 sm:px-6 md:gap-12 md:px-12">
-      <header className="relative flex flex-col gap-6 overflow-hidden rounded-[2.5rem] border border-emerald-200/70 bg-white/90 p-6 shadow-glow sm:rounded-[3rem] sm:p-10">
+      <header
+        className="relative flex flex-col gap-6 overflow-hidden rounded-[2.5rem] border border-emerald-200/70 bg-white/90 p-6 shadow-glow sm:rounded-[3rem] sm:p-10"
+        data-aos="fade-up"
+      >
         <span className="bubble-accent hidden sm:block -right-20 top-16 h-64 w-64 opacity-50" />
         <span className="bubble-accent hidden sm:block -left-24 bottom-0 h-52 w-52 opacity-40" />
         <div className="flex flex-wrap items-start justify-between gap-6">
@@ -57,7 +60,7 @@ export default function HomePage() {
       )}
 
       {isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-aos="fade-up">
           {Array.from({ length: 6 }).map((_, index) => (
             <div
               key={index}
@@ -66,7 +69,7 @@ export default function HomePage() {
           ))}
         </div>
       ) : plants.length ? (
-        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <section data-aos="fade-up" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {plants.map((plant) => (
             <PlantCard key={plant.plantId} plant={plant} />
           ))}

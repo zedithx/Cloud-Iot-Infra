@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "aos/dist/aos.css";
+import AosInitializer from "@/components/AosInitializer";
 
 export const metadata: Metadata = {
   title: "CloudIoT Telemetry Console",
@@ -14,6 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-plant-gradient text-slate-900">
+        <AosInitializer />
         {children}
       </body>
     </html>

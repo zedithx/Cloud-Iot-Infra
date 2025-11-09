@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { format, formatDistanceToNow } from "date-fns";
 import ControlPanel from "@/components/ControlPanel";
 import TimeseriesChart from "@/components/TimeseriesChart";
 import usePlantDetail from "@/hooks/usePlantDetail";
+import {
+  PLANT_PROFILES,
+  guessProfileId,
+  type PlantMetricRange,
+  type PlantProfile
+} from "@/lib/plantProfiles";
 
 function formatMetric(
   value?: number | null,
@@ -27,6 +33,44 @@ export default function PlantDetailPage() {
   const plantId = decodeURIComponent(params.plantId);
   const { snapshot, series, isLoading, error, refresh, isMocked } =
     usePlantDetail(plantId);
+  const [selectedProfileId, setSelectedProfileId] = useState<string>(
+    guessProfileId(plantId) ?? PLANT_PROFILES[0].id
+  );
+
+  const selectedProfile: PlantProfile = useMemo(
+    () =>
+      PLANT_PROFILES.find((profile) => profile.id === selectedProfileId) ??
+      PLANT_PROFILES[0],
+    [selectedProfileId]
+  );
+
+  const recentAverages = useMemo(() => {
+    if (!series.length) {
+      return {};
+    }
+    const lookback = series.slice(-8);
+    const averageFor = (key: keyof typeof lookback[number]) => {
+      const values = lookback
+        .map((point) => point[key])
+        .filter(
+          (value): value is number =>
+            typeof value === "number" && Number.isFinite(value)
+        );
+      if (!values.length) {
+        return undefined;
+      }
+      return (
+        values.reduce((total, value) => total + value, 0) / values.length
+      );
+    };
+
+    return {
+      temperatureC: averageFor("temperatureC"),
+      humidity: averageFor("humidity"),
+      soilMoisture: averageFor("soilMoisture"),
+      lightLux: averageFor("lightLux")
+    } as Record<string, number | undefined>;
+  }, [series]);
 
   const summary = useMemo(() => {
     if (!snapshot) {
@@ -55,9 +99,106 @@ export default function PlantDetailPage() {
     };
   }, [snapshot]);
 
+  const metricComparisons = useMemo(() => {
+    const asDisplay = (
+      key: "temperatureC" | "humidity" | "soilMoisture" | "lightLux",
+      value?: number | null
+    ): string => {
+      if (value === undefined || value === null) {
+        return "No data";
+      }
+      if (key === "temperatureC") {
+        return `${value.toFixed(1)} °C`;
+      }
+      if (key === "humidity") {
+        return `${Math.round(value)} %`;
+      }
+      if (key === "soilMoisture") {
+        return `${Math.round(value * 100)} %`;
+      }
+      return `${Math.round(value).toLocaleString()} lux`;
+    };
+
+    const withinRange = (
+      key: "temperatureC" | "humidity" | "soilMoisture" | "lightLux",
+      range: PlantMetricRange,
+      value?: number | null
+    ): "ideal" | "low" | "high" | "unknown" => {
+      if (value === undefined || value === null) {
+        return "unknown";
+      }
+      const effectiveValue =
+        key === "soilMoisture" ? value : value; // stored as fraction already
+      if (effectiveValue < range.min) {
+        return "low";
+      }
+      if (effectiveValue > range.max) {
+        return "high";
+      }
+      return "ideal";
+    };
+
+    const sourceValue = (
+      key: "temperatureC" | "humidity" | "soilMoisture" | "lightLux"
+    ) =>
+      snapshot?.[key] ??
+      (recentAverages as Record<string, number | undefined>)[key] ??
+      null;
+
+    return [
+      {
+        key: "temperatureC" as const,
+        label: "Temperature",
+        rangeDisplay: `${selectedProfile.metrics.temperatureC.min.toFixed(0)}–${selectedProfile.metrics.temperatureC.max.toFixed(0)} °C`,
+        status: withinRange(
+          "temperatureC",
+          selectedProfile.metrics.temperatureC,
+          sourceValue("temperatureC")
+        ),
+        displayValue: asDisplay("temperatureC", sourceValue("temperatureC"))
+      },
+      {
+        key: "humidity" as const,
+        label: "Humidity",
+        rangeDisplay: `${selectedProfile.metrics.humidity.min.toFixed(0)}–${selectedProfile.metrics.humidity.max.toFixed(0)} %`,
+        status: withinRange(
+          "humidity",
+          selectedProfile.metrics.humidity,
+          sourceValue("humidity")
+        ),
+        displayValue: asDisplay("humidity", sourceValue("humidity"))
+      },
+      {
+        key: "soilMoisture" as const,
+        label: "Soil moisture",
+        rangeDisplay: `${Math.round(selectedProfile.metrics.soilMoisture.min * 100)}–${Math.round(selectedProfile.metrics.soilMoisture.max * 100)} %`,
+        status: withinRange(
+          "soilMoisture",
+          selectedProfile.metrics.soilMoisture,
+          sourceValue("soilMoisture")
+        ),
+        displayValue: asDisplay("soilMoisture", sourceValue("soilMoisture"))
+      },
+      {
+        key: "lightLux" as const,
+        label: "Light intensity",
+        rangeDisplay: `${Math.round(selectedProfile.metrics.lightLux.min / 1000)}–${Math.round(selectedProfile.metrics.lightLux.max / 1000)}k lux`,
+        status: withinRange(
+          "lightLux",
+          selectedProfile.metrics.lightLux,
+          sourceValue("lightLux")
+        ),
+        displayValue: asDisplay("lightLux", sourceValue("lightLux"))
+      }
+    ];
+  }, [recentAverages, selectedProfile, snapshot]);
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 pb-16 pt-8 sm:px-6 md:gap-10 md:px-12">
-      <nav className="flex flex-wrap items-center justify-between gap-4 text-xs text-emerald-700 sm:text-sm">
+      <nav
+        className="flex flex-wrap items-center justify-between gap-4 text-xs text-emerald-700 sm:text-sm"
+        data-aos="fade-up"
+      >
         <Link href="/" className="hover:text-emerald-500">
           ← Back to overview
         </Link>
@@ -77,7 +218,11 @@ export default function PlantDetailPage() {
         </div>
       </nav>
 
-      <header className="card-surface flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+      <header
+        className="card-surface flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between"
+        data-aos="fade-up"
+        data-aos-delay="100"
+      >
         <div className="space-y-3">
           <span className={`pill ${summary.statusTone} text-[0.65rem] sm:text-xs`}>
             {summary.statusLabel}
@@ -114,6 +259,94 @@ export default function PlantDetailPage() {
         </div>
       </header>
 
+      <section
+        className="card-surface space-y-5"
+        data-aos="fade-up"
+        data-aos-delay="150"
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-emerald-900 sm:text-lg">
+              Recommended growing profile
+            </h3>
+            <p className="text-xs text-emerald-600 sm:text-sm">
+              Compare live readings against horticulture guidelines for each crop.
+            </p>
+          </div>
+          <label className="flex w-full flex-col gap-2 text-xs font-medium text-emerald-700 sm:w-64 sm:text-sm">
+            Plant type
+            <select
+              value={selectedProfileId}
+              onChange={(event) => setSelectedProfileId(event.target.value)}
+              className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200"
+            >
+              {PLANT_PROFILES.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <p className="text-xs text-emerald-600 sm:text-sm">
+          {selectedProfile.description}
+        </p>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          {metricComparisons.map((metric) => {
+            const statusStyles: Record<
+              typeof metric.status,
+              string
+            > = {
+              ideal:
+                "bg-emerald-100 text-emerald-700 border border-emerald-200",
+              low: "bg-amber-100 text-amber-700 border border-amber-200",
+              high: "bg-rose-100 text-rose-700 border border-rose-200",
+              unknown:
+                "bg-slate-100 text-slate-500 border border-slate-200"
+            };
+            const statusLabel: Record<typeof metric.status, string> = {
+              ideal: "Within range",
+              low: "Too low",
+              high: "Too high",
+              unknown: "No data"
+            };
+
+            return (
+              <div
+                key={metric.key}
+                className="flex flex-col gap-3 rounded-3xl bg-white/90 p-4 shadow-inner"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-900">
+                      {metric.label}
+                    </p>
+                    <p className="text-xs text-emerald-600">
+                      Ideal: {metric.rangeDisplay}
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-full px-3 py-1 text-[0.65rem] font-semibold ${statusStyles[metric.status]}`}
+                  >
+                    {statusLabel[metric.status]}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm text-emerald-800">
+                  <span className="text-xs uppercase tracking-wide text-emerald-500">
+                    Current
+                  </span>
+                  <span className="font-semibold text-emerald-900">
+                    {metric.displayValue}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
       {error && (
         <div className="rounded-3xl border border-rose-200 bg-rose-50/80 p-5 text-sm text-rose-600 shadow-card sm:p-6">
           {error}
@@ -128,8 +361,15 @@ export default function PlantDetailPage() {
       )}
 
       {!isLoading && snapshot && (
-        <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
-          <div className="space-y-6">
+        <>
+          <div data-aos="fade-up">
+            <ControlPanel
+              plantId={plantId}
+              profileLabel={selectedProfile.label}
+            />
+          </div>
+
+          <div className="space-y-6" data-aos="fade-up">
             <TimeseriesChart points={series} />
 
             <section className="card-surface">
@@ -184,8 +424,7 @@ export default function PlantDetailPage() {
               </div>
             </section>
           </div>
-          <ControlPanel plantId={plantId} />
-        </div>
+        </>
       )}
     </main>
   );
