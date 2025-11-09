@@ -25,10 +25,10 @@ export default function PlantCard({ plant }: PlantCardProps) {
   return (
     <Link
       href={`/plants/${plant.plantId}`}
-      className="group relative flex h-full flex-col gap-4 overflow-hidden rounded-[2.5rem] border border-emerald-200/80 bg-white/85 p-6 shadow-card transition hover:-translate-y-1.5 hover:shadow-glow"
+      className="group relative flex h-full flex-col gap-4 overflow-hidden rounded-[2rem] border border-emerald-200/80 bg-white/90 p-5 shadow-card transition hover:-translate-y-1.5 hover:shadow-glow sm:rounded-[2.5rem] sm:p-6"
     >
-      <span className="bubble-accent -right-24 top-8 h-56 w-56 opacity-40" />
-      <span className="bubble-accent -left-32 bottom-0 h-44 w-44 opacity-30" />
+      <span className="bubble-accent hidden sm:block -right-24 top-8 h-56 w-56 opacity-40" />
+      <span className="bubble-accent hidden sm:block -left-32 bottom-0 h-44 w-44 opacity-30" />
       <div className="absolute inset-0 bg-gradient-to-br from-white/85 via-emerald-50/70 to-bloom-50/70 opacity-0 transition group-hover:opacity-100" />
       <div className="relative z-10 flex items-center justify-between">
         <span className={`pill ${status.tone}`}>
@@ -37,13 +37,13 @@ export default function PlantCard({ plant }: PlantCardProps) {
             {plant.disease ? "🌧️" : "🌼"}
           </span>
         </span>
-        <span className="rounded-full bg-emerald-50/80 px-3 py-1 text-xs font-medium text-emerald-600 shadow-sm">
+        <span className="rounded-full bg-emerald-50/80 px-3 py-1 text-[0.65rem] font-medium text-emerald-600 shadow-sm sm:text-xs">
           {lastSeen}
         </span>
       </div>
       <div className="relative z-10 space-y-3">
-        <h2 className="flex items-center gap-2 text-2xl font-semibold text-emerald-900">
-          <span className="text-3xl" aria-hidden>
+        <h2 className="flex items-center gap-2 text-xl font-semibold text-emerald-900 sm:text-2xl">
+          <span className="text-2xl sm:text-3xl" aria-hidden>
             🌱
           </span>
           {plant.plantId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
@@ -62,7 +62,7 @@ export default function PlantCard({ plant }: PlantCardProps) {
               : "—"}
           </strong>
         </p>
-        <div className="grid grid-cols-2 gap-3 text-sm text-emerald-700">
+        <div className="grid grid-cols-2 gap-3 text-sm text-emerald-700 max-[420px]:grid-cols-1">
           <div className="flex items-center gap-2 rounded-3xl bg-emerald-100/80 px-4 py-2 font-medium">
             <span aria-hidden>🌤️</span>
             <span className="text-emerald-900">
@@ -90,7 +90,7 @@ export default function PlantCard({ plant }: PlantCardProps) {
               : "unknown"}
           </strong>
         </span>
-        <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 shadow transition group-hover:bg-emerald-500 group-hover:text-white">
+        <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 shadow transition group-hover:bg-emerald-500 group-hover:text-white sm:h-11 sm:w-11">
           →
         </span>
       </div>

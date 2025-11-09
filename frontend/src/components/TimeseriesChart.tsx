@@ -36,12 +36,12 @@ export default function TimeseriesChart({ points }: TimeseriesChartProps) {
   const data = formatPoints(points);
 
   return (
-    <div className="card-surface border-dashed border-emerald-200/80 bg-white/90">
-      <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold text-emerald-900">
+    <div className="card-surface border-dashed border-emerald-200/80 bg-white/95">
+      <h3 className="mb-3 flex items-center gap-2 text-base font-semibold text-emerald-900 sm:mb-4 sm:text-lg">
         <span aria-hidden>📈</span>
         Growth conditions
       </h3>
-      <div className="h-80 w-full">
+      <div className="h-[18rem] w-full sm:h-80">
         <ResponsiveContainer>
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="6 6" stroke="#bbf7d0" />

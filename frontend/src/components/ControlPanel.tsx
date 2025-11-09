@@ -50,16 +50,16 @@ export default function ControlPanel({ plantId }: ControlPanelProps) {
   return (
     <section className="card-surface space-y-4">
       <header>
-        <h3 className="text-lg font-semibold text-emerald-900">
+        <h3 className="text-lg font-semibold text-emerald-900 sm:text-xl">
           Remote actions
         </h3>
-        <p className="text-sm text-emerald-700/70">
+        <p className="text-xs text-emerald-700/70 sm:text-sm">
           Command relays are not wired yet—these buttons simulate how you will
           trigger actuators for <strong>{plantId}</strong>.
         </p>
       </header>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {(Object.entries(ACTION_META) as [ActionKey, (typeof ACTION_META)[ActionKey]][]).map(([action, meta]) => {
           const status = state[action];
           const isPending = status === "pending";
@@ -76,13 +76,13 @@ export default function ControlPanel({ plantId }: ControlPanelProps) {
                   : `border-emerald-200 bg-gradient-to-br ${meta.accent} text-emerald-700 hover:-translate-y-1 hover:shadow-card disabled:cursor-wait`
               }`}
             >
-              <span className="flex items-center gap-2 text-base font-semibold">
-                <span aria-hidden className="text-xl">
+              <span className="flex items-center gap-2 text-sm font-semibold sm:text-base">
+                <span aria-hidden className="text-lg sm:text-xl">
                   {meta.icon}
                 </span>
                 {meta.label}
               </span>
-              <span className="rounded-full bg-white/70 px-3 py-1 text-xs text-emerald-600/90 shadow">
+              <span className="rounded-full bg-white/70 px-3 py-1 text-[0.7rem] text-emerald-600/90 shadow sm:text-xs">
                 {status === "idle" && "Ready"}
                 {isPending && "Contacting controller..."}
                 {isSuccess && "Simulated run complete"}
