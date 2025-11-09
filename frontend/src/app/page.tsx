@@ -1,84 +1,88 @@
 "use client";
 
-import { useMemo } from "react";
-import TelemetryForm from "@/components/TelemetryForm";
-import TelemetryTable from "@/components/TelemetryTable";
-import useTelemetryFeed from "@/hooks/useTelemetryFeed";
+import usePlantSnapshots from "@/hooks/usePlantSnapshots";
+import PlantCard from "@/components/PlantCard";
 
 export default function HomePage() {
-  const {
-    records,
-    isLoading,
-    lastError,
-    refresh,
-    selectedDevice,
-    setSelectedDevice
-  } = useTelemetryFeed();
-
-  const devices = useMemo(() => {
-    const unique = new Set<string>();
-    records.forEach((record) => unique.add(record.deviceId));
-    return Array.from(unique).sort();
-  }, [records]);
+  const { plants, isLoading, error, refresh, isMocked } = usePlantSnapshots();
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-12 p-6 md:p-12">
-      <header className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-8 shadow-card">
-        <div className="flex items-center justify-between gap-4">
-          <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
-            CloudIoT Telemetry Console
-          </h1>
-          <button
-            onClick={refresh}
-            className="rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white shadow hover:bg-sky-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
-          >
-            Refresh
-          </button>
-        </div>
-        <p className="text-sm text-slate-300 md:text-base">
-          Submit new telemetry events, monitor anomaly scores, and keep tabs on
-          greenhouse conditions in real time. Data is persisted to DynamoDB via
-          the FastAPI service running on ECS Fargate.
+    <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-12 p-6 md:p-12">
+      <header className="relative flex flex-col gap-6 overflow-hidden rounded-[3rem] border border-emerald-200/70 bg-white/85 p-10 shadow-glow">
+        <span className="bubble-accent -right-20 top-16 h-64 w-64 opacity-50" />
+        <span className="bubble-accent -left-24 bottom-0 h-52 w-52 opacity-40" />
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium uppercase tracking-[0.35em] text-emerald-500">
+              Greenhouse overview
+            </p>
+          </div>
+            <h1 className="mt-2 text-4xl font-semibold text-emerald-900 md:text-5xl">
+              Plant vitality dashboard
+            </h1>
+          </div>
+          <div className="flex items-center gap-3">
+            {isMocked && (
+              <span className="inline-flex items-center gap-2 rounded-full bg-bloom-100 px-4 py-2 text-xs font-bold uppercase tracking-widest text-bloom-500 shadow">
+                <span aria-hidden>🎈</span> Demo data
+              </span>
+            )}
+            <button
+              onClick={refresh}
+              type="button"
+              className="rounded-full border border-emerald-200 bg-sprout-100 px-6 py-2 text-sm font-semibold text-emerald-700 shadow-card transition hover:-translate-y-0.5 hover:bg-sprout-200"
+            >
+              Refresh data
+            </button>
+          </div>
+        <p className="max-w-2xl text-sm text-emerald-700 md:text-base">
+          Monitor each plant&apos;s health, moisture, and disease risk in real
+          time. Tap a plant card to open detailed charts, recent activity, and
+          the simulated control panel for lights, water, and airflow.
         </p>
+        <div className="flex flex-wrap gap-3 text-xs text-emerald-600">
+          <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-semibold">
+            🌼 Cartoon greenhouse aesthetic
+          </span>
+          <span className="inline-flex items-center gap-2 rounded-full bg-bloom-50 px-3 py-1 font-semibold">
+            🌿 Real-time vitals (mock enabled)
+          </span>
+        </div>
       </header>
 
-      <section className="grid gap-8 md:grid-cols-5 md:items-start">
-        <div className="md:col-span-2">
-          <TelemetryForm onSubmitted={refresh} />
+      {error && (
+        <div className="rounded-3xl border border-rose-200 bg-rose-50/80 p-6 text-sm text-rose-600 shadow-card">
+          {error}
         </div>
+      )}
 
-        <div className="md:col-span-3 space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <label htmlFor="device-filter" className="text-sm font-medium">
-              Filter device
-            </label>
-            <select
-              id="device-filter"
-              value={selectedDevice ?? ""}
-              onChange={(event) =>
-                setSelectedDevice(
-                  event.target.value.length ? event.target.value : undefined
-                )
-              }
-              className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-400 md:w-64"
-            >
-              <option value="">All devices</option>
-              {devices.map((deviceId) => (
-                <option key={deviceId} value={deviceId}>
-                  {deviceId}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <TelemetryTable
-            records={records}
-            isLoading={isLoading}
-            lastError={lastError}
-          />
+      {isLoading ? (
+        <div className="grid gap-6 md:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div
+              key={index}
+              className="h-56 animate-pulse rounded-3xl bg-white/60 shadow-inner"
+            />
+          ))}
         </div>
-      </section>
-    </main>
+      ) : plants.length ? (
+        <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+          {plants.map((plant) => (
+            <PlantCard key={plant.plantId} plant={plant} />
+          ))}
+        </section>
+      ) : (
+        <div className="card-surface text-emerald-700">
+          <h2 className="text-lg font-semibold text-emerald-900">
+            No plants yet
+          </h2>
+          <p className="mt-2 text-sm">
+            Once your devices begin streaming telemetry into DynamoDB you&apos;ll
+            see each plant appear here with the latest vitals.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

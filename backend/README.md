@@ -90,6 +90,15 @@ If synthesis fails with missing Python packages, re-run `python -m pip install -
 - **Lambda handlers (`runtime/lambdas/*`)**: Update the code to match real ingestion, inference, and processing logic.
 - **Frontend dashboard (`../frontend`)**: Next.js + Tailwind UI for operators; see the package README for setup instructions.
 
+The FastAPI service now exposes plant-centric endpoints used by the dashboard:
+
+| Endpoint | Purpose |
+| -------- | ------- |
+| `GET /plants` | Latest snapshot for every plant (aggregated scan). |
+| `GET /plants/{plantId}` | Most recent reading for a single plant. |
+| `GET /plants/{plantId}/timeseries` | Chronological series (supports `limit`, `start`, `end`). |
+| `POST /telemetry` | Legacy ingestion path; accepts `deviceId` (alias of `plantId`). |
+
 ## Checklist: What to customise before deployment
 
 1. **FastAPI container image**

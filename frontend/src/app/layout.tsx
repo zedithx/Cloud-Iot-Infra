@@ -13,7 +13,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-slate-950 text-slate-100">{children}</body>
+      <body className="min-h-screen bg-plant-gradient text-slate-900">
+        {children}
+      </body>
     </html>
   );
 }
