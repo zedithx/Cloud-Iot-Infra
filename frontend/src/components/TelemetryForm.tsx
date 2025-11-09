@@ -8,9 +8,12 @@ type TelemetryFormProps = {
   onSubmitted?: () => void;
 };
 
-type FormState = TelemetryPayload & {
-  humidity?: number | "";
-  temperatureC?: number | "";
+type FormState = {
+  deviceId: string;
+  score: number;
+  temperatureC: number | "";
+  humidity: number | "";
+  notes: string;
 };
 
 const API_READY = Boolean(process.env.NEXT_PUBLIC_API_BASE_URL);
