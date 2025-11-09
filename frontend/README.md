@@ -14,10 +14,10 @@ cd frontend
 npm install
 ```
 
-Create a `.env.local` file with the following variable and adjust the value to your API Gateway endpoint:
+Create a `.env.local` file and point the app at the API Gateway deployed by CDK:
 
 ```
-NEXT_PUBLIC_API_BASE_URL=https://abc123.execute-api.ap-southeast-1.amazonaws.com
+NEXT_PUBLIC_API_BASE_URL=https://your-api-id.execute-api.your-region.amazonaws.com
 ```
 
 ### Development

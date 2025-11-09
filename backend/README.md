@@ -90,6 +90,31 @@ If synthesis fails with missing Python packages, re-run `python -m pip install -
 - **Lambda handlers (`runtime/lambdas/*`)**: Update the code to match real ingestion, inference, and processing logic.
 - **Frontend dashboard (`../frontend`)**: Next.js + Tailwind UI for operators; see the package README for setup instructions.
 
+## Checklist: What to customise before deployment
+
+1. **FastAPI container image**
+   - Implement the real API in `runtime/ecs/fastapi/app/main.py`.
+   - Build and push the Docker image to ECR using `runtime/ecs/fastapi/push_image.sh`.
+   - Update `fastapi_image_uri` in `infra/config/app_context.py` (or supply via `cdk -c config='{"fastapi_image_uri":"..."}'`).
+
+2. **IoT / Data pipeline Lambdas**
+   - Review `runtime/lambdas/presign_url`, `runtime/lambdas/stream_processor`, `runtime/lambdas/inference`, `runtime/lambdas/capture_scheduler` and replace placeholder logic with production-ready code.
+
+3. **Alerting & environment variables**
+   - Set `alert_email` and any other stage-specific overrides in `infra/config/app_context.py`.
+   - Adjust `allowed_origins` if the FastAPI service should only serve specific frontend domains.
+
+4. **Frontend configuration**
+   - In `frontend`, run `npm install`, copy `.env.local.example` to `.env.local`, and set `NEXT_PUBLIC_API_BASE_URL` to the API Gateway endpoint created after deployment.
+
+5. **Secrets / credentials**
+   - Store API keys or other secrets outside the repo (e.g., AWS Secrets Manager, SSM Parameter Store).
+   - Local `.env` files are ignored (see `.gitignore`), but don’t commit real secrets.
+
+6. **Deployment workflow**
+   - Use `runtime/ecs/fastapi/push_image.sh` to build, push, and redeploy the ECS task automatically.
+   - For CI/CD, ensure the workflow has access to AWS credentials and passes the FastAPI image URI via CDK context.
+
 ## Operational Outputs
 
 - SNS alert topic (`Notifications`) for subscribing additional endpoints.
