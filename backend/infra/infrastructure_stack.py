@@ -1,3 +1,5 @@
+from typing import Optional
+
 from aws_cdk import Stack
 from constructs import Construct
 
@@ -54,13 +56,15 @@ class InfrastructureStack(Stack):
             app_context=app_context,
             data_plane=self.data_plane,
         ).resources
-        self.ml_inference: MlInferenceResources = MlInferenceConstruct(
-            self,
-            "MlInference",
-            app_context=app_context,
-            data_plane=self.data_plane,
-            networking=self.networking,
-        ).resources
+        self.ml_inference: Optional[MlInferenceResources] = None
+        if app_context.config.enable_ml_inference:
+            self.ml_inference = MlInferenceConstruct(
+                self,
+                "MlInference",
+                app_context=app_context,
+                data_plane=self.data_plane,
+                networking=self.networking,
+            ).resources
         self.data_processing: DataProcessingResources = DataProcessingConstruct(
             self,
             "DataProcessing",

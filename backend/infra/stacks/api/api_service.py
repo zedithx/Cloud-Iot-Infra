@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from pathlib import Path
 
 from aws_cdk import (
     Duration,
     aws_apigatewayv2 as apigwv2,
     aws_apigatewayv2_integrations as apigw_integrations,
+    aws_ecr_assets as ecr_assets,
     aws_ec2 as ec2,
     aws_ecs as ecs,
     aws_elasticloadbalancingv2 as elbv2,
@@ -24,6 +26,7 @@ class ApiServiceResources:
     http_api: apigwv2.HttpApi
     task_definition: ecs.FargateTaskDefinition
     container: ecs.ContainerDefinition
+    target_group: elbv2.ApplicationTargetGroup
 
 
 class ApiServiceConstruct(Construct):
@@ -67,9 +70,24 @@ class ApiServiceConstruct(Construct):
             memory_limit_mib=1024,
         )
 
+        if app_context.config.fastapi_image_uri:
+            container_image = ecs.ContainerImage.from_registry(
+                app_context.config.fastapi_image_uri
+            )
+        else:
+            container_image = ecs.ContainerImage.from_asset(
+                str(
+                    Path(__file__).resolve().parents[3]
+                    / "runtime"
+                    / "ecs"
+                    / "fastapi"
+                ),
+                platform=ecr_assets.Platform.LINUX_AMD64,
+            )
+
         container = task_definition.add_container(
             "FastApiContainer",
-            image=ecs.ContainerImage.from_registry(app_context.config.fastapi_image_uri),
+            image=container_image,
             logging=ecs.LogDrivers.aws_logs(
                 stream_prefix="fastapi",
                 log_retention=logs.RetentionDays.ONE_WEEK,
@@ -103,14 +121,14 @@ class ApiServiceConstruct(Construct):
             vpc=networking.vpc,
             internet_facing=True,
             security_group=networking.alb_security_group,
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
         )
-
         listener = load_balancer.add_listener(
             "HttpListener",
             port=80,
             open=True,
         )
-        listener.add_targets(
+        target_group = listener.add_targets(
             "FargateTarget",
             port=8000,
             targets=[service],
@@ -127,9 +145,17 @@ class ApiServiceConstruct(Construct):
             create_default_stage=True,
         )
 
+        vpc_link = apigwv2.VpcLink(
+            self,
+            "AlbVpcLink",
+            vpc=networking.vpc,
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+        )
+
         alb_integration = apigw_integrations.HttpAlbIntegration(
             "AlbIntegration",
             listener=listener,
+            vpc_link=vpc_link,
         )
 
         http_api.add_routes(
@@ -151,5 +177,6 @@ class ApiServiceConstruct(Construct):
             http_api=http_api,
             task_definition=task_definition,
             container=container,
+            target_group=target_group,
         )
 

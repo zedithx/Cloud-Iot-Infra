@@ -6,6 +6,9 @@ from typing import Any, Dict
 import boto3
 
 s3_client = boto3.client("s3")
+iot_data_client = boto3.client("iot-data")
+
+IOT_TOPIC = os.environ["IOT_PUBLISH_TOPIC"]
 
 
 def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
@@ -34,6 +37,19 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
         "expiresIn": default_ttl,
         "bucket": bucket_name,
     }
+
+    iot_data_client.publish(
+        topic=IOT_TOPIC,
+        payload=json.dumps(
+            {
+                "deviceId": device_id,
+                "objectKey": object_key,
+                "uploadUrl": presigned_url,
+                "expiresIn": default_ttl,
+                "timestamp": timestamp,
+            }
+        ).encode("utf-8"),
+    )
 
     return {
         "statusCode": 200,

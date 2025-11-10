@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from aws_cdk import (
     Duration,
+    Stack,
     aws_iam as iam,
     aws_lambda as lambda_,
     aws_logs as logs,
@@ -119,8 +120,9 @@ class MlInferenceConstruct(Construct):
             self,
             "DiseaseDetectionEndpoint",
             endpoint_name=f"{app_context.stage}-leaf-disease-endpoint",
-            endpoint_config_name=endpoint_config.endpoint_config_name,
+            endpoint_config_name=endpoint_config.attr_endpoint_config_name,
         )
+        endpoint.add_dependency(endpoint_config)
 
         inference_lambda = lambda_.Function(
             self,
@@ -143,7 +145,13 @@ class MlInferenceConstruct(Construct):
         inference_lambda.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["sagemaker:InvokeEndpoint"],
-                resources=[endpoint.attr_endpoint_arn],
+                resources=[
+                    Stack.of(self).format_arn(
+                        service="sagemaker",
+                        resource="endpoint",
+                        resource_name=endpoint.endpoint_name,
+                    )
+                ],
             )
         )
 

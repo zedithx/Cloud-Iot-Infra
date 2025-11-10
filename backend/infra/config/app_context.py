@@ -13,25 +13,27 @@ class ApplicationEnvironmentConfig:
 
     stage: str
     vpc_cidr: str
-    fastapi_image_uri: str
     alert_email: str
     sagemaker_model_data_url: str
     sagemaker_model_image_uri: str
     alert_threshold: float
     allowed_origins: str = "*"
+    enable_ml_inference: bool = False
     account: Optional[str] = None
     region: Optional[str] = None
+    fastapi_image_uri: Optional[str] = None
 
 
 DEFAULT_ENV = ApplicationEnvironmentConfig(
     stage="dev",
     vpc_cidr="10.20.0.0/16",
-    fastapi_image_uri="public.ecr.aws/docker/library/python:3.11-slim",
-    alert_email="alerts@example.com",
+    fastapi_image_uri=None,
+    alert_email="aersijun@gmail.com",
     sagemaker_model_data_url="s3://placeholder-model-artifacts/model.tar.gz",
     sagemaker_model_image_uri="683313688378.dkr.ecr.{region}.amazonaws.com/kmeans:1",
     alert_threshold=0.8,
     allowed_origins="*",
+    enable_ml_inference=False,
 )
 
 

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 from aws_cdk import Duration, aws_cloudwatch as cloudwatch, aws_ecs as ecs, aws_secretsmanager as secretsmanager, aws_ssm as ssm
 from constructs import Construct
@@ -27,7 +28,7 @@ class OperationsConstruct(Construct):
         app_context: AppContext,
         data_processing: DataProcessingResources,
         api_service: ApiServiceResources,
-        ml_inference: MlInferenceResources,
+        ml_inference: Optional[MlInferenceResources],
     ) -> None:
         super().__init__(scope, construct_id)
 
@@ -44,7 +45,7 @@ class OperationsConstruct(Construct):
         app_context: AppContext,
         data_processing: DataProcessingResources,
         api_service: ApiServiceResources,
-        ml_inference: MlInferenceResources,
+        ml_inference: Optional[MlInferenceResources],
     ) -> OperationsResources:
         threshold_parameter = ssm.StringParameter(
             self,
@@ -82,23 +83,24 @@ class OperationsConstruct(Construct):
         )
         alarms.append(stream_error_alarm)
 
-        inference_alarm = cloudwatch.Alarm(
-            self,
-            "InferenceErrors",
-            metric=ml_inference.inference_lambda.metric_errors(
-                period=Duration.minutes(5)
-            ),
-            threshold=1,
-            evaluation_periods=1,
-            datapoints_to_alarm=1,
-            alarm_description="Alerts when inference Lambda reports errors.",
-        )
-        alarms.append(inference_alarm)
+        if ml_inference:
+            inference_alarm = cloudwatch.Alarm(
+                self,
+                "InferenceErrors",
+                metric=ml_inference.inference_lambda.metric_errors(
+                    period=Duration.minutes(5)
+                ),
+                threshold=1,
+                evaluation_periods=1,
+                datapoints_to_alarm=1,
+                alarm_description="Alerts when inference Lambda reports errors.",
+            )
+            alarms.append(inference_alarm)
 
         alb_unhealthy_alarm = cloudwatch.Alarm(
             self,
             "AlbUnhealthyHosts",
-            metric=api_service.load_balancer.metric_unhealthy_host_count(
+            metric=api_service.target_group.metric_unhealthy_host_count(
                 period=Duration.minutes(5)
             ),
             threshold=1,
