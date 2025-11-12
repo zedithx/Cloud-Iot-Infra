@@ -44,34 +44,37 @@ class InfrastructureStack(Stack):
             "Notifications",
             app_context=app_context,
         ).resources
+        self.data_processing: DataProcessingResources = DataProcessingConstruct(
+            self,
+            "DataProcessing",
+            app_context=app_context,
+            data_plane=self.data_plane,
+        ).resources
         self.iot_ingest: IotIngestResources = IotIngestConstruct(
             self,
             "IotIngest",
             app_context=app_context,
             data_plane=self.data_plane,
+            data_processing=self.data_processing,
         ).resources
         self.scheduling: SchedulingResources = SchedulingConstruct(
             self,
             "Scheduling",
             app_context=app_context,
             data_plane=self.data_plane,
-        ).resources
-        self.ml_inference: Optional[MlInferenceResources] = None
-        if app_context.config.enable_ml_inference:
-            self.ml_inference = MlInferenceConstruct(
-                self,
-                "MlInference",
-                app_context=app_context,
-                data_plane=self.data_plane,
-                networking=self.networking,
-            ).resources
-        self.data_processing: DataProcessingResources = DataProcessingConstruct(
-            self,
-            "DataProcessing",
-            app_context=app_context,
-            data_plane=self.data_plane,
             notifications=self.notifications,
         ).resources
+        self.ml_inference: Optional[MlInferenceResources] = None
+        self.ml_inference: Optional[MlInferenceResources] = None
+        if app_context.config.enable_ml_inference:
+            # Model artifact not ready; keep resources optional to avoid provisioning failure.
+            # self.ml_inference = MlInferenceConstruct(
+            #     self,
+            #     "MlInference",
+            #     app_context=app_context,
+            #     data_plane=self.data_plane,
+            # ).resources
+            pass
         self.api_service: ApiServiceResources = ApiServiceConstruct(
             self,
             "ApiService",

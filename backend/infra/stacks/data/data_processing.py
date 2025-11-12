@@ -1,20 +1,19 @@
 from dataclasses import dataclass
 
-from aws_cdk import Duration, aws_lambda as lambda_, aws_lambda_event_sources as lambda_event_sources, aws_logs as logs
+from aws_cdk import Duration, aws_lambda as lambda_, aws_logs as logs
 from constructs import Construct
 
 from infra.config.app_context import AppContext
 from infra.stacks.data.data_plane import DataPlaneResources
-from infra.stacks.notifications import NotificationResources
 
 
 @dataclass
 class DataProcessingResources:
-    stream_processor: lambda_.Function
+    ingestion_lambda: lambda_.Function
 
 
 class DataProcessingConstruct(Construct):
-    """Lambda stream processor that aggregates telemetry into DynamoDB."""
+    """Lambda handler invoked by IoT Core to persist telemetry readings."""
 
     def __init__(
         self,
@@ -23,14 +22,12 @@ class DataProcessingConstruct(Construct):
         *,
         app_context: AppContext,
         data_plane: DataPlaneResources,
-        notifications: NotificationResources,
     ) -> None:
         super().__init__(scope, construct_id)
 
         self.resources = self._create_resources(
             app_context=app_context,
             data_plane=data_plane,
-            notifications=notifications,
         )
 
     def _create_resources(
@@ -38,11 +35,10 @@ class DataProcessingConstruct(Construct):
         *,
         app_context: AppContext,
         data_plane: DataPlaneResources,
-        notifications: NotificationResources,
     ) -> DataProcessingResources:
-        processor_fn = lambda_.Function(
+        ingestion_fn = lambda_.Function(
             self,
-            "StreamProcessorFunction",
+            "TelemetryIngestionFunction",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
             code=lambda_.Code.from_asset("runtime/lambdas/stream_processor"),
@@ -51,24 +47,10 @@ class DataProcessingConstruct(Construct):
             log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "DYNAMO_TABLE_NAME": data_plane.telemetry_table.table_name,
-                "ALERT_THRESHOLD": str(app_context.config.alert_threshold),
-                "SNS_TOPIC_ARN": notifications.alert_topic.topic_arn,
             },
         )
 
-        data_plane.telemetry_table.grant_write_data(processor_fn)
-        data_plane.telemetry_stream.grant_read(processor_fn)
-        notifications.alert_topic.grant_publish(processor_fn)
+        data_plane.telemetry_table.grant_read_write_data(ingestion_fn)
 
-        processor_fn.add_event_source(
-            lambda_event_sources.KinesisEventSource(
-                data_plane.telemetry_stream,
-                batch_size=100,
-                starting_position=lambda_.StartingPosition.LATEST,
-                bisect_batch_on_error=True,
-                retry_attempts=3,
-            )
-        )
-
-        return DataProcessingResources(stream_processor=processor_fn)
+        return DataProcessingResources(ingestion_lambda=ingestion_fn)
 

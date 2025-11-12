@@ -1,14 +1,6 @@
 from dataclasses import dataclass
 
-from aws_cdk import (
-    Duration,
-    RemovalPolicy,
-    aws_dynamodb as dynamodb,
-    aws_iam as iam,
-    aws_kinesis as kinesis,
-    aws_kms as kms,
-    aws_s3 as s3,
-)
+from aws_cdk import RemovalPolicy, aws_dynamodb as dynamodb, aws_iam as iam, aws_kms as kms, aws_s3 as s3
 from constructs import Construct
 
 from infra.config.app_context import AppContext
@@ -18,7 +10,6 @@ from infra.config.app_context import AppContext
 class DataPlaneResources:
     raw_images_bucket: s3.Bucket
     processed_assets_bucket: s3.Bucket
-    telemetry_stream: kinesis.Stream
     telemetry_table: dynamodb.Table
     shared_data_access_policy: iam.ManagedPolicy
 
@@ -65,16 +56,6 @@ class DataPlaneConstruct(Construct):
             encryption_key=encryption_key,
             removal_policy=removal_policy,
             auto_delete_objects=app_context.stage != "prod",
-        )
-
-        telemetry_stream = kinesis.Stream(
-            self,
-            "TelemetryStream",
-            stream_name=f"{app_context.stage}-leaf-telemetry",
-            shard_count=1,
-            retention_period=Duration.hours(24),
-            encryption=kinesis.StreamEncryption.KMS,
-            encryption_key=encryption_key,
         )
 
         telemetry_table = dynamodb.Table(
@@ -131,15 +112,6 @@ class DataPlaneConstruct(Construct):
                 ),
                 iam.PolicyStatement(
                     actions=[
-                        "kinesis:PutRecord",
-                        "kinesis:PutRecords",
-                        "kinesis:GetShardIterator",
-                        "kinesis:GetRecords",
-                    ],
-                    resources=[telemetry_stream.stream_arn],
-                ),
-                iam.PolicyStatement(
-                    actions=[
                         "kms:Encrypt",
                         "kms:Decrypt",
                         "kms:GenerateDataKey*",
@@ -152,7 +124,6 @@ class DataPlaneConstruct(Construct):
         return DataPlaneResources(
             raw_images_bucket=raw_images_bucket,
             processed_assets_bucket=processed_assets_bucket,
-            telemetry_stream=telemetry_stream,
             telemetry_table=telemetry_table,
             shared_data_access_policy=shared_policy,
         )

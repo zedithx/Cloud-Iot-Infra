@@ -2,7 +2,8 @@ from dataclasses import dataclass
 
 from aws_cdk import (
     Duration,
-    Stack,
+    aws_events as events,
+    aws_events_targets as targets,
     aws_iam as iam,
     aws_lambda as lambda_,
     aws_logs as logs,
@@ -14,17 +15,20 @@ from constructs import Construct
 
 from infra.config.app_context import AppContext
 from infra.stacks.data.data_plane import DataPlaneResources
-from infra.stacks.networking.networking import NetworkingResources
 
 
 @dataclass
 class MlInferenceResources:
-    inference_lambda: lambda_.Function
-    sagemaker_endpoint: sagemaker.CfnEndpoint
+    batch_launcher_lambda: lambda_.Function
+    results_processor_lambda: lambda_.Function
+    model: sagemaker.CfnModel
+    results_bucket: s3.Bucket
+    model_artifact_bucket: s3.Bucket
+    batch_schedule: events.Rule
 
 
 class MlInferenceConstruct(Construct):
-    """Sets up SageMaker model hosting and the Lambda invoker wired to S3 events."""
+    """Sets up SageMaker batch transform infrastructure and schedules periodic jobs."""
 
     def __init__(
         self,
@@ -33,14 +37,12 @@ class MlInferenceConstruct(Construct):
         *,
         app_context: AppContext,
         data_plane: DataPlaneResources,
-        networking: NetworkingResources,
     ) -> None:
         super().__init__(scope, construct_id)
 
         self.resources = self._create_resources(
             app_context=app_context,
             data_plane=data_plane,
-            networking=networking,
         )
 
     def _create_resources(
@@ -48,121 +50,118 @@ class MlInferenceConstruct(Construct):
         *,
         app_context: AppContext,
         data_plane: DataPlaneResources,
-        networking: NetworkingResources,
     ) -> MlInferenceResources:
-        sagemaker_role = iam.Role(
+        batch_results_bucket = s3.Bucket(
             self,
-            "SageMakerExecutionRole",
-            assumed_by=iam.ServicePrincipal("sagemaker.amazonaws.com"),
-            inline_policies={
-                "ModelArtifactAccess": iam.PolicyDocument(
-                    statements=[
-                        iam.PolicyStatement(
-                            actions=["s3:GetObject"],
-                            resources=[
-                                data_plane.processed_assets_bucket.arn_for_objects("*"),
-                                data_plane.raw_images_bucket.arn_for_objects("*"),
-                            ],
-                        ),
-                        iam.PolicyStatement(
-                            actions=["s3:ListBucket"],
-                            resources=[
-                                data_plane.raw_images_bucket.bucket_arn,
-                                data_plane.processed_assets_bucket.bucket_arn,
-                            ],
-                        ),
-                        iam.PolicyStatement(
-                            actions=["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey*"],
-                            resources=["*"],
-                        ),
-                    ]
-                )
-            },
+            "BatchResultsBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            auto_delete_objects=app_context.stage != "prod",
+            removal_policy=(
+                s3.RemovalPolicy.RETAIN if app_context.stage == "prod" else s3.RemovalPolicy.DESTROY
+            ),
         )
 
-        model_name = f"{app_context.stage}-leaf-disease-model"
+        sagemaker_role = iam.Role(
+            self,
+            "BatchTransformRole",
+            assumed_by=iam.ServicePrincipal("sagemaker.amazonaws.com"),
+        )
+        data_plane.raw_images_bucket.grant_read(sagemaker_role)
+        batch_results_bucket.grant_read_write(sagemaker_role)
+
+        model_bucket = s3.Bucket(
+            self,
+            "ModelArtifactBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            auto_delete_objects=app_context.stage != "prod",
+            removal_policy=(
+                s3.RemovalPolicy.RETAIN if app_context.stage == "prod" else s3.RemovalPolicy.DESTROY
+            ),
+        )
+        model_bucket.grant_read(sagemaker_role)
 
         model = sagemaker.CfnModel(
             self,
-            "DiseaseDetectionModel",
+            "BatchTransformModel",
             execution_role_arn=sagemaker_role.role_arn,
             primary_container=sagemaker.CfnModel.ContainerDefinitionProperty(
                 image=app_context.sagemaker_image_uri,
                 model_data_url=app_context.config.sagemaker_model_data_url,
-                environment={
-                    "SAGEMAKER_CONTAINER_LOG_LEVEL": "20",
-                    "SAGEMAKER_REGION": app_context.env.region or "us-east-1",
-                },
             ),
-            vpc_config=sagemaker.CfnModel.VpcConfigProperty(
-                security_group_ids=[networking.sagemaker_security_group.security_group_id],
-                subnets=[subnet.subnet_id for subnet in networking.vpc.public_subnets],
-            ),
-            model_name=model_name,
+            model_name=f"{app_context.stage}-leaf-disease-model",
         )
 
-        endpoint_config = sagemaker.CfnEndpointConfig(
+        batch_launcher = lambda_.Function(
             self,
-            "DiseaseDetectionEndpointConfig",
-            production_variants=[
-                sagemaker.CfnEndpointConfig.ProductionVariantProperty(
-                    model_name=model.model_name,
-                    variant_name="AllTraffic",
-                    initial_instance_count=1,
-                    instance_type="ml.m5.large",
-                )
-            ],
-            endpoint_config_name=f"{app_context.stage}-leaf-disease-config",
-        )
-        endpoint_config.add_dependency(model)
-
-        endpoint = sagemaker.CfnEndpoint(
-            self,
-            "DiseaseDetectionEndpoint",
-            endpoint_name=f"{app_context.stage}-leaf-disease-endpoint",
-            endpoint_config_name=endpoint_config.attr_endpoint_config_name,
-        )
-        endpoint.add_dependency(endpoint_config)
-
-        inference_lambda = lambda_.Function(
-            self,
-            "InferenceFunction",
+            "BatchTransformLauncher",
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
-            code=lambda_.Code.from_asset("runtime/lambdas/inference"),
-            timeout=Duration.seconds(30),
+            code=lambda_.Code.from_asset("runtime/lambdas/batch_launcher"),
+            timeout=Duration.minutes(5),
             memory_size=512,
             log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
-                "SAGEMAKER_ENDPOINT_NAME": endpoint.endpoint_name,
-                "PROCESSED_BUCKET": data_plane.processed_assets_bucket.bucket_name,
+                "MODEL_NAME": model.model_name,
+                "SAGEMAKER_ROLE_ARN": sagemaker_role.role_arn,
+                "RAW_BUCKET": data_plane.raw_images_bucket.bucket_name,
+                "BATCH_RESULTS_BUCKET": batch_results_bucket.bucket_name,
+                "STAGE": app_context.stage,
             },
         )
 
-        data_plane.raw_images_bucket.grant_read(inference_lambda)
-        data_plane.processed_assets_bucket.grant_write(inference_lambda)
-
-        inference_lambda.add_to_role_policy(
+        batch_launcher.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["sagemaker:InvokeEndpoint"],
-                resources=[
-                    Stack.of(self).format_arn(
-                        service="sagemaker",
-                        resource="endpoint",
-                        resource_name=endpoint.endpoint_name,
-                    )
+                actions=[
+                    "sagemaker:CreateTransformJob",
+                    "sagemaker:DescribeTransformJob",
+                    "sagemaker:StopTransformJob",
                 ],
+                resources=["*"],
             )
         )
+        data_plane.raw_images_bucket.grant_read(batch_launcher)
+        batch_results_bucket.grant_read_write(batch_launcher)
 
-        data_plane.raw_images_bucket.add_event_notification(
+        results_processor = lambda_.Function(
+            self,
+            "BatchResultsProcessor",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=lambda_.Code.from_asset("runtime/lambdas/batch_results_processor"),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            log_retention=logs.RetentionDays.ONE_WEEK,
+            environment={
+                "DYNAMO_TABLE_NAME": data_plane.telemetry_table.table_name,
+            },
+        )
+
+        batch_results_bucket.grant_read(results_processor)
+        data_plane.telemetry_table.grant_read_write_data(results_processor)
+
+        batch_results_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(inference_lambda),
-            s3.NotificationKeyFilter(prefix=f"{app_context.stage}/"),
+            s3n.LambdaDestination(results_processor),
+        )
+
+        batch_schedule = events.Rule(
+            self,
+            "BatchTransformSchedule",
+            schedule=events.Schedule.cron(minute="5", hour="*"),
+            targets=[targets.LambdaFunction(batch_launcher)],
+            description="Run SageMaker batch transform five minutes past every hour.",
         )
 
         return MlInferenceResources(
-            inference_lambda=inference_lambda,
-            sagemaker_endpoint=endpoint,
+            batch_launcher_lambda=batch_launcher,
+            results_processor_lambda=results_processor,
+            model=model,
+            results_bucket=batch_results_bucket,
+            model_artifact_bucket=model_bucket,
+            batch_schedule=batch_schedule,
         )
 

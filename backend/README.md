@@ -4,11 +4,11 @@
 This AWS CDK (Python) project provisions the full cloud footprint for the CloudIoT leaf‑disease monitoring solution. It deploys the following subsystems:
 
 - **Networking** – single public-subnet VPC, Internet-facing ALB, ECS/Lambda/SageMaker security groups, S3/DynamoDB gateway endpoints.
-- **Data plane** – encrypted S3 buckets for raw and processed assets, Kinesis data stream, DynamoDB telemetry table, shared IAM policy, KMS CMK.
-- **IoT ingest** – presigned-url Lambda, IoT Core policy/topic rule that pipes sensor telemetry into Kinesis.
-- **Event scheduling** – EventBridge rule + Lambda that simulates hourly capture jobs.
-- **ML inference** – SageMaker endpoint, inference Lambda, and S3 event wiring.
-- **Stream processing** – Kinesis-processing Lambda that persists telemetry, evaluates alert thresholds, and publishes to SNS.
+- **Data plane** – encrypted S3 buckets for raw images, batch results, processed artifacts, DynamoDB telemetry table, shared IAM policy, KMS CMK.
+- **IoT ingest** – presigned-url Lambda, IoT Core policy/topic rule that invokes the telemetry ingestion Lambda, plus periodic presign broadcasts.
+- **Event scheduling** – EventBridge rules for hourly capture simulation, hourly+5min SageMaker batch transform launches, and a 5-minute telemetry evaluator.
+- **ML inference** – SageMaker Batch Transform job triggered every hour at :05, with outputs pushed to an S3 bucket and processed by Lambda before landing in DynamoDB.
+- **Telemetry processing** – Lambda invoked by IoT Core that stores readings/thresholds in DynamoDB, plus a scheduled evaluator that raises SNS alerts using recent metrics and the latest disease risk.
 - **Notifications** – SNS topic with default email subscription driven by environment context.
 - **API service** – ECS Fargate FastAPI service behind an ALB, surfaced via API Gateway HTTP API.
 - **Operations** – SSM parameter for alert thresholds, Secrets Manager secret for FastAPI API key, CloudWatch alarms for critical workloads.
@@ -24,7 +24,7 @@ backend/
 │  ├─ config/                   # Stage/environment configuration helpers
 │  └─ stacks/                   # Domain-oriented construct modules
 │      ├─ api/                  # ECS/ALB/API Gateway wiring
-│      ├─ data/                 # Kinesis, DynamoDB, shared data policies
+│      ├─ data/                 # DynamoDB and shared data policies
 │      ├─ iot/                  # IoT Core + ingest Lambda
 │      ├─ ml/                   # SageMaker + inference Lambda
 │      ├─ networking/           # VPC and security groups
@@ -36,7 +36,10 @@ backend/
 │  │   ├─ capture_scheduler/
 │  │   ├─ inference/
 │  │   ├─ presign_url/
-│  │   └─ stream_processor/
+│  │   ├─ stream_processor/
+│  │   ├─ batch_launcher/
+│  │   ├─ batch_results_processor/
+│  │   └─ metrics_evaluator/
 │  └─ ecs/
 │      └─ fastapi/              # Placeholder for the FastAPI container source
 ├─ tests/                       # CDK unit tests
@@ -107,7 +110,7 @@ The FastAPI service now exposes plant-centric endpoints used by the dashboard:
    - Update `fastapi_image_uri` in `infra/config/app_context.py` (or supply via `cdk -c config='{"fastapi_image_uri":"..."}'`).
 
 2. **IoT / Data pipeline Lambdas**
-   - Review `runtime/lambdas/presign_url`, `runtime/lambdas/stream_processor`, `runtime/lambdas/inference`, `runtime/lambdas/capture_scheduler` and replace placeholder logic with production-ready code.
+   - Review `runtime/lambdas/presign_url`, `runtime/lambdas/stream_processor`, `runtime/lambdas/batch_launcher`, `runtime/lambdas/batch_results_processor`, `runtime/lambdas/metrics_evaluator`, `runtime/lambdas/inference` (if re-enabled), and `runtime/lambdas/capture_scheduler`; replace placeholder logic with production-ready code.
 
 3. **Alerting & environment variables**
    - Set `alert_email` and any other stage-specific overrides in `infra/config/app_context.py`.

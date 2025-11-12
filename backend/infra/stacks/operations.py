@@ -70,32 +70,32 @@ class OperationsConstruct(Construct):
 
         alarms: list[cloudwatch.Alarm] = []
 
-        stream_error_alarm = cloudwatch.Alarm(
+        ingestion_alarm = cloudwatch.Alarm(
             self,
-            "StreamProcessorErrors",
-            metric=data_processing.stream_processor.metric_errors(
+            "TelemetryIngestionErrors",
+            metric=data_processing.ingestion_lambda.metric_errors(
                 period=Duration.minutes(5)
             ),
             threshold=1,
             evaluation_periods=1,
             datapoints_to_alarm=1,
-            alarm_description="Alerts when the stream processor Lambda reports errors.",
+            alarm_description="Alerts when the telemetry ingestion Lambda reports errors.",
         )
-        alarms.append(stream_error_alarm)
+        alarms.append(ingestion_alarm)
 
         if ml_inference:
-            inference_alarm = cloudwatch.Alarm(
+            results_alarm = cloudwatch.Alarm(
                 self,
-                "InferenceErrors",
-                metric=ml_inference.inference_lambda.metric_errors(
+                "BatchResultsProcessorErrors",
+                metric=ml_inference.results_processor_lambda.metric_errors(
                     period=Duration.minutes(5)
                 ),
                 threshold=1,
                 evaluation_periods=1,
                 datapoints_to_alarm=1,
-                alarm_description="Alerts when inference Lambda reports errors.",
+                alarm_description="Alerts when batch results processor Lambda reports errors.",
             )
-            alarms.append(inference_alarm)
+            alarms.append(results_alarm)
 
         alb_unhealthy_alarm = cloudwatch.Alarm(
             self,

@@ -13,6 +13,7 @@ from constructs import Construct
 
 from infra.config.app_context import AppContext
 from infra.stacks.data.data_plane import DataPlaneResources
+from infra.stacks.data.data_processing import DataProcessingResources
 
 
 @dataclass
@@ -33,12 +34,14 @@ class IotIngestConstruct(Construct):
         *,
         app_context: AppContext,
         data_plane: DataPlaneResources,
+        data_processing: DataProcessingResources,
     ) -> None:
         super().__init__(scope, construct_id)
 
         self.resources = self._create_resources(
             app_context=app_context,
             data_plane=data_plane,
+            data_processing=data_processing,
         )
 
     def _create_resources(
@@ -46,6 +49,7 @@ class IotIngestConstruct(Construct):
         *,
         app_context: AppContext,
         data_plane: DataPlaneResources,
+        data_processing: DataProcessingResources,
     ) -> IotIngestResources:
         presign_topic = f"leaf/commands/{app_context.stage}/presign"
         presign_function = self._create_presign_lambda(
@@ -87,32 +91,14 @@ class IotIngestConstruct(Construct):
             policy_name=f"{app_context.stage}-leaf-device",
         )
 
-        topic_rule_role = iam.Role(
-            self,
-            "IotKinesisRole",
-            assumed_by=iam.ServicePrincipal("iot.amazonaws.com"),
-            inline_policies={
-                "KinesisWrite": iam.PolicyDocument(
-                    statements=[
-                        iam.PolicyStatement(
-                            actions=["kinesis:PutRecord", "kinesis:PutRecords"],
-                            resources=[data_plane.telemetry_stream.stream_arn],
-                        )
-                    ]
-                )
-            },
-        )
-
         telemetry_topic_rule = iot.CfnTopicRule(
             self,
             "TelemetryRule",
             topic_rule_payload=iot.CfnTopicRule.TopicRulePayloadProperty(
                 actions=[
                     iot.CfnTopicRule.ActionProperty(
-                        kinesis=iot.CfnTopicRule.KinesisActionProperty(
-                            role_arn=topic_rule_role.role_arn,
-                            stream_name=data_plane.telemetry_stream.stream_name,
-                            partition_key="${topic(2)}",
+                        lambda_=iot.CfnTopicRule.LambdaActionProperty(
+                            function_arn=data_processing.ingestion_lambda.function_arn
                         )
                     )
                 ],
@@ -120,6 +106,15 @@ class IotIngestConstruct(Construct):
                 aws_iot_sql_version="2016-03-23",
                 rule_disabled=False,
             ),
+        )
+
+        lambda_.CfnPermission(
+            self,
+            "AllowIotInvokeTelemetryLambda",
+            action="lambda:InvokeFunction",
+            function_name=data_processing.ingestion_lambda.function_name,
+            principal="iot.amazonaws.com",
+            source_arn=telemetry_topic_rule.attr_arn,
         )
 
         presign_schedule_rule = events.Rule(

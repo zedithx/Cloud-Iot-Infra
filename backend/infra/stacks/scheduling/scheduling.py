@@ -5,12 +5,15 @@ from constructs import Construct
 
 from infra.config.app_context import AppContext
 from infra.stacks.data.data_plane import DataPlaneResources
+from infra.stacks.notifications import NotificationResources
 
 
 @dataclass
 class SchedulingResources:
     capture_lambda: lambda_.Function
     hourly_rule: events.Rule
+    metrics_evaluator_lambda: lambda_.Function
+    metrics_rule: events.Rule
 
 
 class SchedulingConstruct(Construct):
@@ -23,12 +26,14 @@ class SchedulingConstruct(Construct):
         *,
         app_context: AppContext,
         data_plane: DataPlaneResources,
+        notifications: NotificationResources,
     ) -> None:
         super().__init__(scope, construct_id)
 
         self.resources = self._create_resources(
             app_context=app_context,
             data_plane=data_plane,
+            notifications=notifications,
         )
 
     def _create_resources(
@@ -36,6 +41,7 @@ class SchedulingConstruct(Construct):
         *,
         app_context: AppContext,
         data_plane: DataPlaneResources,
+        notifications: NotificationResources,
     ) -> SchedulingResources:
         capture_lambda = lambda_.Function(
             self,
@@ -61,8 +67,38 @@ class SchedulingConstruct(Construct):
             description="Trigger hourly placeholder capture job.",
         )
 
+        metrics_lambda = lambda_.Function(
+            self,
+            "MetricsEvaluatorFunction",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="handler.lambda_handler",
+            code=lambda_.Code.from_asset("runtime/lambdas/metrics_evaluator"),
+            timeout=Duration.seconds(60),
+            memory_size=256,
+            log_retention=logs.RetentionDays.ONE_WEEK,
+            environment={
+                "DYNAMO_TABLE_NAME": data_plane.telemetry_table.table_name,
+                "SNS_TOPIC_ARN": notifications.alert_topic.topic_arn,
+                "DEFAULT_THRESHOLD": str(app_context.config.alert_threshold),
+                "ENV_WINDOW_MINUTES": "30",
+            },
+        )
+
+        data_plane.telemetry_table.grant_read_data(metrics_lambda)
+        notifications.alert_topic.grant_publish(metrics_lambda)
+
+        metrics_rule = events.Rule(
+            self,
+            "MetricsEvaluationRule",
+            schedule=events.Schedule.rate(Duration.minutes(5)),
+            targets=[targets.LambdaFunction(metrics_lambda)],
+            description="Evaluate device metrics and trigger alerts when averages exceed thresholds.",
+        )
+
         return SchedulingResources(
             capture_lambda=capture_lambda,
             hourly_rule=hourly_rule,
+            metrics_evaluator_lambda=metrics_lambda,
+            metrics_rule=metrics_rule,
         )
 
