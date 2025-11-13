@@ -69,10 +69,10 @@ aws iot-data publish \
 
 sleep 2
 
-echo "Uploading mock batch transform result to s3://${RESULTS_BUCKET}/${RESULT_KEY}"
-echo "{\"deviceId\":\"${DEVICE_ID}\",\"diseaseRisk\":0.92}" > /tmp/mock-result.jsonl
-aws s3 cp /tmp/mock-result.jsonl "s3://${RESULTS_BUCKET}/${RESULT_KEY}" --region "${REGION}"
-rm /tmp/mock-result.jsonl
+# echo "Uploading mock batch transform result to s3://${RESULTS_BUCKET}/${RESULT_KEY}"
+# echo "{\"deviceId\":\"${DEVICE_ID}\",\"diseaseRisk\":0.92}" > /tmp/mock-result.jsonl
+# aws s3 cp /tmp/mock-result.jsonl "s3://${RESULTS_BUCKET}/${RESULT_KEY}" --region "${REGION}"
+# rm /tmp/mock-result.jsonl
 
 echo "Invoking metrics evaluator Lambda: ${METRICS_LAMBDA}"
 aws lambda invoke \
