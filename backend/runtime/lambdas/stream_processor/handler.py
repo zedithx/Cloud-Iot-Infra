@@ -58,6 +58,19 @@ def _extract_messages(event: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
                 yield payload
         return
 
+    # IoT Core -> Lambda invokes with {"message": {...}, "topic": "...", ...}
+    if "message" in event:
+        payload = event["message"]
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                logger.warning("Unable to parse IoT message string: %s", payload)
+                payload = None
+        if isinstance(payload, dict):
+            yield payload
+        return
+
     if "detail" in event and isinstance(event["detail"], dict):
         yield event["detail"]
         return
@@ -87,12 +100,13 @@ def _resolve_timestamp(message: Dict[str, Any]) -> str:
 
 def _build_reading_item(device_id: str, timestamp: str, message: Dict[str, Any]) -> Dict[str, Any]:
     metrics = _extract_metrics(message)
+    sanitized_raw = _convert_value(message)
     return {
         "deviceId": device_id,
         "timestamp": timestamp,
         "readingType": TELEMETRY_READING_TYPE,
         "metrics": metrics,
-        "raw": message,
+        "raw": sanitized_raw,
     }
 
 

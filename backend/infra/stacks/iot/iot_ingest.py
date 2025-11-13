@@ -1,14 +1,6 @@
 from dataclasses import dataclass
 
-from aws_cdk import (
-    Duration,
-    aws_events as events,
-    aws_events_targets as targets,
-    aws_iam as iam,
-    aws_iot as iot,
-    aws_lambda as lambda_,
-    aws_logs as logs,
-)
+from aws_cdk import aws_iam as iam, aws_iot as iot, aws_lambda as lambda_
 from constructs import Construct
 
 from infra.config.app_context import AppContext
@@ -18,14 +10,12 @@ from infra.stacks.data.data_processing import DataProcessingResources
 
 @dataclass
 class IotIngestResources:
-    presign_lambda: lambda_.Function
     device_policy: iot.CfnPolicy
     telemetry_topic_rule: iot.CfnTopicRule
-    presign_schedule_rule: events.Rule
 
 
 class IotIngestConstruct(Construct):
-    """Creates IoT Core scaffolding and Lambda to mint S3 presigned URLs for edge devices."""
+    """Creates IoT Core scaffolding for device connectivity and telemetry ingestion."""
 
     def __init__(
         self,
@@ -51,12 +41,6 @@ class IotIngestConstruct(Construct):
         data_plane: DataPlaneResources,
         data_processing: DataProcessingResources,
     ) -> IotIngestResources:
-        presign_topic = f"leaf/commands/{app_context.stage}/presign"
-        presign_function = self._create_presign_lambda(
-            data_plane=data_plane,
-            presign_topic=presign_topic,
-        )
-
         account = app_context.env.account or "*"
         region = app_context.env.region or "*"
 
@@ -117,52 +101,8 @@ class IotIngestConstruct(Construct):
             source_arn=telemetry_topic_rule.attr_arn,
         )
 
-        presign_schedule_rule = events.Rule(
-            self,
-            "PresignUrlSchedule",
-            schedule=events.Schedule.cron(minute="0", hour="*/2"),
-            targets=[targets.LambdaFunction(presign_function)],
-            description="Invoke presign URL Lambda every two hours to publish new upload links.",
-        )
-
-        presign_function.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["iot:Publish"],
-                resources=[
-                    f"arn:aws:iot:{region}:{account}:topic/{presign_topic}",
-                ],
-            )
-        )
-
         return IotIngestResources(
-            presign_lambda=presign_function,
             device_policy=device_policy,
             telemetry_topic_rule=telemetry_topic_rule,
-            presign_schedule_rule=presign_schedule_rule,
         )
-
-    def _create_presign_lambda(
-        self,
-        data_plane: DataPlaneResources,
-        presign_topic: str,
-    ) -> lambda_.Function:
-        function = lambda_.Function(
-            self,
-            "PresignUrlFunction",
-            runtime=lambda_.Runtime.PYTHON_3_12,
-            handler="handler.lambda_handler",
-            code=lambda_.Code.from_asset("runtime/lambdas/presign_url"),
-            timeout=Duration.seconds(10),
-            log_retention=logs.RetentionDays.ONE_WEEK,
-            environment={
-                "RAW_BUCKET_NAME": data_plane.raw_images_bucket.bucket_name,
-                "PRESIGN_TTL_SECONDS": "900",
-                "IOT_PUBLISH_TOPIC": presign_topic,
-            },
-        )
-
-        data_plane.raw_images_bucket.grant_put(function)
-        data_plane.raw_images_bucket.grant_read(function)
-
-        return function
 
