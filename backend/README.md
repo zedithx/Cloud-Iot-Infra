@@ -9,7 +9,7 @@ This AWS CDK (Python) project provisions the full cloud footprint for the CloudI
 - **Event scheduling** – EventBridge rules for hourly capture simulation, hourly+5min SageMaker batch transform launches, and a 5-minute telemetry evaluator.
 - **ML inference** – SageMaker Batch Transform job triggered every hour at :05, with outputs pushed to an S3 bucket and processed by Lambda before landing in DynamoDB.
 - **Telemetry processing** – Lambda invoked by IoT Core that stores readings/thresholds in DynamoDB, plus a scheduled evaluator that raises SNS alerts using recent metrics and the latest disease risk.
-- **Notifications** – SNS topic with default email subscription driven by environment context.
+- **Notifications** – SNS topic that invokes an email relay Lambda; the Lambda uses SES to deliver alerts with configurable sender/recipient addresses.
 - **API service** – ECS Fargate FastAPI service behind an ALB, surfaced via API Gateway HTTP API.
 - **Operations** – SSM parameter for alert thresholds, Secrets Manager secret for FastAPI API key, CloudWatch alarms for critical workloads.
 
@@ -112,7 +112,8 @@ The FastAPI service now exposes plant-centric endpoints used by the dashboard:
    - Review `runtime/lambdas/stream_processor`, `runtime/lambdas/batch_launcher`, `runtime/lambdas/batch_results_processor`, `runtime/lambdas/metrics_evaluator`, `runtime/lambdas/inference` (if re-enabled), and `runtime/lambdas/capture_scheduler`; replace placeholder logic with production-ready code.
 
 3. **Alerting & environment variables**
-   - Set `alert_email` and any other stage-specific overrides in `infra/config/app_context.py`.
+   - Set `alert_email`, `ses_from_email`, and `ses_to_email` in `infra/config/app_context.py` (or via CDK context overrides).
+   - Verify the SES sender/recipient identities in the target AWS account (and request SES production access if needed).
    - Adjust `allowed_origins` if the FastAPI service should only serve specific frontend domains.
 
 4. **Frontend configuration**

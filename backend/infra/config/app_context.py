@@ -19,6 +19,8 @@ class ApplicationEnvironmentConfig:
     alert_threshold: float
     allowed_origins: str = "*"
     enable_ml_inference: bool = False
+    ses_from_email: Optional[str] = None
+    ses_to_email: Optional[str] = None
     account: Optional[str] = None
     region: Optional[str] = None
     fastapi_image_uri: Optional[str] = None
@@ -34,6 +36,8 @@ DEFAULT_ENV = ApplicationEnvironmentConfig(
     alert_threshold=0.8,
     allowed_origins="*",
     enable_ml_inference=False,
+    ses_from_email="tangledsocialapp@gmail.com",
+    ses_to_email="aersijun@gmail.com",
 )
 
 

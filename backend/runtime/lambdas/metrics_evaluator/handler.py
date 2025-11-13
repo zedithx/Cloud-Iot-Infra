@@ -43,8 +43,10 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
         env_averages = _compute_environment_averages(device_id, window_start, now)
 
         if disease_score >= threshold:
-            alert = _publish_alert(device_id, disease_score, float(threshold), env_averages, now)
-            alerts.append(alert)
+            alert_message = _publish_alert(
+                device_id, disease_score, float(threshold), env_averages, now
+            )
+            alerts.append(alert_message)
 
     return {
         "statusCode": 200,
@@ -145,12 +147,73 @@ def _publish_alert(
         "environmentAverages": env_averages,
         "evaluatedAt": now.isoformat(),
     }
+    subject = f"Disease risk high for {device_id}"
+    body_text = _build_body_text(device_id, disease_score, threshold, env_averages, now)
+    body_html = _build_body_html(device_id, disease_score, threshold, env_averages, now)
+
+    message = {
+        "subject": subject,
+        "bodyText": body_text,
+        "bodyHtml": body_html,
+        "payload": payload,
+    }
+
     sns_client.publish(
         TopicArn=SNS_TOPIC_ARN,
-        Subject=f"Disease risk high for {device_id}",
-        Message=json.dumps(payload),
+        Message=json.dumps(message),
     )
-    return payload
+    return message
+
+
+def _build_body_text(
+    device_id: str,
+    disease_score: float,
+    threshold: float,
+    env_averages: Dict[str, float],
+    now: datetime,
+) -> str:
+    lines = [
+        f"Device ID: {device_id}",
+        f"Disease risk score: {disease_score:.2f}",
+        f"Threshold: {threshold:.2f}",
+    ]
+    if env_averages:
+        lines.append("Environmental averages (last 30 minutes):")
+        for metric, value in env_averages.items():
+            lines.append(f"  - {metric}: {value:.2f}")
+    else:
+        lines.append("Environmental averages unavailable during the evaluation window.")
+    lines.append(f"Evaluated at: {now.isoformat()}")
+    return "\n".join(lines)
+
+
+def _build_body_html(
+    device_id: str,
+    disease_score: float,
+    threshold: float,
+    env_averages: Dict[str, float],
+    now: datetime,
+) -> str:
+    parts: List[str] = [
+        f"<p><strong>Device ID:</strong> {device_id}</p>",
+        f"<p><strong>Disease risk score:</strong> {disease_score:.2f}</p>",
+        f"<p><strong>Threshold:</strong> {threshold:.2f}</p>",
+    ]
+    if env_averages:
+        items = "".join(
+            f"<li><strong>{metric}:</strong> {value:.2f}</li>"
+            for metric, value in env_averages.items()
+        )
+        parts.append(
+            "<p><strong>Environmental averages (last 30 minutes):</strong></p>"
+            f"<ul>{items}</ul>"
+        )
+    else:
+        parts.append(
+            "<p><strong>Environmental averages:</strong> Unavailable during the evaluation window.</p>"
+        )
+    parts.append(f"<p><strong>Evaluated at:</strong> {now.isoformat()}</p>")
+    return "".join(parts)
 
 
 def _timestamp_prefix(dt: datetime, low: bool) -> str:
