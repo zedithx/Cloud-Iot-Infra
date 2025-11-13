@@ -127,6 +127,12 @@ The FastAPI service now exposes plant-centric endpoints used by the dashboard:
    - Use `runtime/ecs/fastapi/push_image.sh` to build, push, and redeploy the ECS task automatically.
    - For CI/CD, ensure the workflow has access to AWS credentials and passes the FastAPI image URI via CDK context.
 
+## Simulation & Testing
+
+- `scripts/simulate_pipeline.py` – Runs the full ingest → DynamoDB → metrics evaluator flow locally using moto (no AWS calls).
+- `scripts/run_live_pipeline.sh` – Sends a handful of telemetry readings to your deployed environment and triggers the metrics evaluator Lambda.
+- `scripts/simulate_device2_pipeline.sh` – Exercises the live pipeline for `device-2`: seeds configuration, publishes three batches of 30 readings (baseline, alert, recovery), uploads matching disease-risk results, and invokes the metrics evaluator after each phase. Set `STAGE`, `REGION`, `ACCOUNT_ID`, `TELEMETRY_TABLE`, `RESULTS_BUCKET`, and `METRICS_LAMBDA` before running.
+
 ## Operational Outputs
 
 - SNS alert topic (`Notifications`) for subscribing additional endpoints.
