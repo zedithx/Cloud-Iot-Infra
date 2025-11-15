@@ -9,6 +9,7 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_ecs as ecs,
     aws_elasticloadbalancingv2 as elbv2,
+    aws_iam as iam,
     aws_logs as logs,
 )
 from constructs import Construct
@@ -114,6 +115,19 @@ class ApiServiceConstruct(Construct):
         )
 
         data_plane.telemetry_table.grant_read_write_data(service.task_definition.task_role)
+
+        # Grant IoT Core publish permissions for actuator commands
+        task_role = service.task_definition.task_role
+        account = app_context.env.account or "*"
+        region = app_context.env.region or "*"
+        task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["iot:Publish"],
+                resources=[
+                    f"arn:aws:iot:{region}:{account}:topic/leaf/commands/*",
+                ],
+            )
+        )
 
         load_balancer = elbv2.ApplicationLoadBalancer(
             self,

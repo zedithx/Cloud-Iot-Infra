@@ -1,7 +1,9 @@
+import json
+import logging
 import os
 import time
 from decimal import Decimal
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -19,6 +21,7 @@ DISEASE_THRESHOLD = float(os.environ.get("DISEASE_THRESHOLD", "0.7"))
 
 dynamodb_resource = boto3.resource("dynamodb", region_name=AWS_REGION)
 telemetry_table = dynamodb_resource.Table(TABLE_NAME)
+iot_client = boto3.client("iot-data", region_name=AWS_REGION)
 
 app = FastAPI(title="CloudIoT FastAPI", version="0.1.0")
 
@@ -101,6 +104,59 @@ class PlantTimeSeriesPoint(BaseModel):
 class PlantTimeSeriesResponse(BaseModel):
     plant_id: str = Field(..., alias="plantId")
     points: List[PlantTimeSeriesPoint]
+
+
+class ActuatorCommand(BaseModel):
+    actuator: Literal["pump", "fan", "lights"]
+    targetValue: float = Field(..., alias="targetValue")
+    metric: Literal["soilMoisture", "temperatureC", "lightLux"]
+
+    class Config:
+        populate_by_name = True
+
+
+class PlantTypeRequest(BaseModel):
+    plantType: str = Field(..., min_length=1)
+
+
+class PlantMetricsResponse(BaseModel):
+    plantType: str
+    temperatureC: Dict[str, float] = Field(..., alias="temperatureC")
+    humidity: Dict[str, float]
+    soilMoisture: Dict[str, float] = Field(..., alias="soilMoisture")
+    lightLux: Dict[str, float] = Field(..., alias="lightLux")
+
+    class Config:
+        populate_by_name = True
+
+
+# Pre-established plant type values
+PLANT_TYPE_METRICS: Dict[str, Dict[str, Dict[str, float]]] = {
+    "basil": {
+        "temperatureC": {"min": 22.0, "max": 28.0},
+        "humidity": {"min": 55.0, "max": 75.0},
+        "soilMoisture": {"min": 0.65, "max": 0.85},
+        "lightLux": {"min": 10000.0, "max": 20000.0},
+    },
+    "strawberry": {
+        "temperatureC": {"min": 18.0, "max": 24.0},
+        "humidity": {"min": 55.0, "max": 70.0},
+        "soilMoisture": {"min": 0.55, "max": 0.7},
+        "lightLux": {"min": 16000.0, "max": 22000.0},
+    },
+    "mint": {
+        "temperatureC": {"min": 18.0, "max": 24.0},
+        "humidity": {"min": 60.0, "max": 80.0},
+        "soilMoisture": {"min": 0.6, "max": 0.8},
+        "lightLux": {"min": 9000.0, "max": 16000.0},
+    },
+    "lettuce": {
+        "temperatureC": {"min": 16.0, "max": 22.0},
+        "humidity": {"min": 60.0, "max": 75.0},
+        "soilMoisture": {"min": 0.65, "max": 0.9},
+        "lightLux": {"min": 8000.0, "max": 15000.0},
+    },
+}
 
 
 def _to_decimal(value: Optional[float]) -> Optional[Decimal]:
@@ -335,6 +391,144 @@ def plant_timeseries(
     ]
 
     return PlantTimeSeriesResponse(plantId=plant_id, points=points)
+
+
+@app.post("/devices/{device_id}/actuators", status_code=200)
+def send_actuator_command(device_id: str, command: ActuatorCommand) -> Dict[str, Any]:
+    """Send an actuator command to a device via IoT Core."""
+    # Validate actuator-to-metric mapping
+    actuator_metric_map = {
+        "pump": "soilMoisture",
+        "fan": "temperatureC",
+        "lights": "lightLux",
+    }
+    expected_metric = actuator_metric_map.get(command.actuator)
+    if command.metric != expected_metric:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Actuator '{command.actuator}' must use metric '{expected_metric}', not '{command.metric}'",
+        )
+
+    # Validate target value ranges
+    if command.actuator == "pump":
+        # soilMoisture: 0.0-1.0
+        if not (0.0 <= command.targetValue <= 1.0):
+            raise HTTPException(
+                status_code=400,
+                detail="Target value for pump (soilMoisture) must be between 0.0 and 1.0",
+            )
+    elif command.actuator == "fan":
+        # temperatureC: reasonable range -50 to 100
+        if not (-50.0 <= command.targetValue <= 100.0):
+            raise HTTPException(
+                status_code=400,
+                detail="Target value for fan (temperatureC) must be between -50.0 and 100.0",
+            )
+    elif command.actuator == "lights":
+        # lightLux: 0 to reasonable max
+        if not (0.0 <= command.targetValue <= 100000.0):
+            raise HTTPException(
+                status_code=400,
+                detail="Target value for lights (lightLux) must be between 0.0 and 100000.0",
+            )
+
+    # Publish to IoT Core
+    topic = f"leaf/commands/{device_id}"
+    payload = {
+        "actuator": command.actuator,
+        "targetValue": command.targetValue,
+        "metric": command.metric,
+        "timestamp": int(time.time()),
+    }
+
+    try:
+        iot_client.publish(
+            topic=topic,
+            qos=1,
+            payload=json.dumps(payload),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to publish command to IoT Core: {str(e)}",
+        )
+
+    return {
+        "deviceId": device_id,
+        "command": payload,
+        "topic": topic,
+        "status": "sent",
+    }
+
+
+@app.get("/plant-types/{plant_type}", response_model=PlantMetricsResponse)
+def get_plant_type_metrics(plant_type: str) -> PlantMetricsResponse:
+    """Get pre-established best values for a plant type."""
+    plant_type_lower = plant_type.lower()
+    if plant_type_lower not in PLANT_TYPE_METRICS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Plant type '{plant_type}' not found. Available types: {', '.join(PLANT_TYPE_METRICS.keys())}",
+        )
+
+    metrics = PLANT_TYPE_METRICS[plant_type_lower]
+    return PlantMetricsResponse(
+        plantType=plant_type_lower,
+        temperatureC=metrics["temperatureC"],
+        humidity=metrics["humidity"],
+        soilMoisture=metrics["soilMoisture"],
+        lightLux=metrics["lightLux"],
+    )
+
+
+@app.get("/plant-types", response_model=List[str])
+def list_plant_types() -> List[str]:
+    """List all available plant types."""
+    return list(PLANT_TYPE_METRICS.keys())
+
+
+@app.post("/devices/{device_id}/plant-type", status_code=200)
+def set_device_plant_type(device_id: str, request: PlantTypeRequest) -> Dict[str, Any]:
+    """Set the plant type for a device and store it in DynamoDB."""
+    plant_type_lower = request.plantType.lower()
+    if plant_type_lower not in PLANT_TYPE_METRICS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Plant type '{request.plantType}' not found. Available types: {', '.join(PLANT_TYPE_METRICS.keys())}",
+        )
+
+    # Store plant type in DynamoDB (similar to how threshold is stored)
+    config_item: Dict[str, Any] = {
+        "deviceId": device_id,
+        "timestamp": "CONFIG",
+        "plantType": plant_type_lower,
+    }
+
+    telemetry_table.put_item(Item=config_item)
+
+    # Also publish to IoT Core so the device can receive it
+    topic = f"leaf/commands/{device_id}"
+    payload = {
+        "plantType": plant_type_lower,
+        "timestamp": int(time.time()),
+    }
+
+    try:
+        iot_client.publish(
+            topic=topic,
+            qos=1,
+            payload=json.dumps(payload),
+        )
+    except Exception as e:
+        # Log but don't fail - DynamoDB write succeeded
+        logger = logging.getLogger(__name__)
+        logger.warning("Failed to publish plant type to IoT Core: %s", e)
+
+    return {
+        "deviceId": device_id,
+        "plantType": plant_type_lower,
+        "status": "set",
+    }
 
 
 @app.get("/")

@@ -13,6 +13,7 @@ import {
   type PlantMetricRange,
   type PlantProfile
 } from "@/lib/plantProfiles";
+import { setDevicePlantType } from "@/lib/api";
 
 function formatMetric(
   value?: number | null,
@@ -36,6 +37,10 @@ export default function PlantDetailPage() {
   const [selectedProfileId, setSelectedProfileId] = useState<string>(
     guessProfileId(plantId) ?? PLANT_PROFILES[0].id
   );
+  const [isLocked, setIsLocked] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [lockError, setLockError] = useState<string | null>(null);
+  const [lockSuccess, setLockSuccess] = useState<boolean>(false);
 
   const selectedProfile: PlantProfile = useMemo(
     () =>
@@ -271,23 +276,89 @@ export default function PlantDetailPage() {
             </h3>
             <p className="text-xs text-emerald-600 sm:text-sm">
               Compare live readings against horticulture guidelines for each crop.
+              {isLocked && (
+                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[0.65rem] font-semibold text-emerald-700">
+                  <span aria-hidden>🔒</span> Locked
+                </span>
+              )}
             </p>
           </div>
-          <label className="flex w-full flex-col gap-2 text-xs font-medium text-emerald-700 sm:w-64 sm:text-sm">
-            Plant type
-            <select
-              value={selectedProfileId}
-              onChange={(event) => setSelectedProfileId(event.target.value)}
-              className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200"
-            >
-              {PLANT_PROFILES.map((profile) => (
-                <option key={profile.id} value={profile.id}>
-                  {profile.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
+            <label className="flex flex-col gap-2 text-xs font-medium text-emerald-700 sm:w-48 sm:text-sm">
+              Plant type
+              <select
+                value={selectedProfileId}
+                onChange={(event) => {
+                  if (!isLocked) {
+                    setSelectedProfileId(event.target.value);
+                    setLockError(null);
+                    setLockSuccess(false);
+                  }
+                }}
+                disabled={isLocked || isSubmitting}
+                className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:bg-emerald-50 disabled:text-emerald-500"
+              >
+                {PLANT_PROFILES.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!isLocked ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsSubmitting(true);
+                  setLockError(null);
+                  setLockSuccess(false);
+                  try {
+                    await setDevicePlantType(plantId, selectedProfileId);
+                    setIsLocked(true);
+                    setLockSuccess(true);
+                    setTimeout(() => setLockSuccess(false), 3000);
+                  } catch (err) {
+                    setLockError(
+                      err instanceof Error
+                        ? err.message
+                        : "Failed to set plant type"
+                    );
+                  } finally {
+                    setIsSubmitting(false);
+                  }
+                }}
+                disabled={isSubmitting}
+                className="rounded-full border border-emerald-300 bg-emerald-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-wait disabled:opacity-50 sm:text-sm"
+              >
+                {isSubmitting ? "Submitting..." : "Lock Selection"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLocked(false);
+                  setLockError(null);
+                  setLockSuccess(false);
+                }}
+                className="rounded-full border border-amber-300 bg-amber-100 px-4 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-200 sm:text-sm"
+              >
+                Reset
+              </button>
+            )}
+          </div>
         </div>
+
+        {(lockError || lockSuccess) && (
+          <div
+            className={`rounded-2xl border px-4 py-3 text-xs sm:text-sm ${
+              lockError
+                ? "border-rose-200 bg-rose-50 text-rose-600"
+                : "border-emerald-200 bg-emerald-50 text-emerald-700"
+            }`}
+          >
+            {lockError || "Plant type locked successfully!"}
+          </div>
+        )}
 
         <p className="text-xs text-emerald-600 sm:text-sm">
           {selectedProfile.description}
@@ -366,6 +437,11 @@ export default function PlantDetailPage() {
             <ControlPanel
               plantId={plantId}
               profileLabel={selectedProfile.label}
+              currentValues={{
+                soilMoisture: snapshot.soilMoisture,
+                temperatureC: snapshot.temperatureC,
+                lightLux: snapshot.lightLux,
+              }}
             />
           </div>
 

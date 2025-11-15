@@ -195,3 +195,113 @@ export async function fetchPlantSeries(
   }
 }
 
+export type ActuatorCommand = {
+  actuator: "pump" | "fan" | "lights";
+  targetValue: number;
+  metric: "soilMoisture" | "temperatureC" | "lightLux";
+};
+
+export async function sendActuatorCommand(
+  deviceId: string,
+  command: ActuatorCommand
+): Promise<{ deviceId: string; command: ActuatorCommand; topic: string; status: string }> {
+  if (USE_MOCK_API) {
+    // Mock response
+    return {
+      deviceId,
+      command,
+      topic: `leaf/commands/${deviceId}`,
+      status: "sent"
+    };
+  }
+
+  try {
+    const response = await apiClient.post<{
+      deviceId: string;
+      command: ActuatorCommand;
+      topic: string;
+      status: string;
+    }>(`/devices/${deviceId}/actuators`, command);
+    return response.data;
+  } catch (error) {
+    console.error("Failed to send actuator command", error);
+    throw error;
+  }
+}
+
+export type PlantMetrics = {
+  plantType: string;
+  temperatureC: { min: number; max: number };
+  humidity: { min: number; max: number };
+  soilMoisture: { min: number; max: number };
+  lightLux: { min: number; max: number };
+};
+
+export async function getPlantTypeMetrics(
+  plantType: string
+): Promise<PlantMetrics> {
+  if (USE_MOCK_API) {
+    // Mock response - use frontend plant profiles
+    const profiles = await import("@/lib/plantProfiles");
+    const profile = profiles.PLANT_PROFILES.find((p) => p.id === plantType);
+    if (!profile) {
+      throw new Error(`Plant type '${plantType}' not found`);
+    }
+    return {
+      plantType: profile.id,
+      temperatureC: {
+        min: profile.metrics.temperatureC.min,
+        max: profile.metrics.temperatureC.max,
+      },
+      humidity: {
+        min: profile.metrics.humidity.min,
+        max: profile.metrics.humidity.max,
+      },
+      soilMoisture: {
+        min: profile.metrics.soilMoisture.min,
+        max: profile.metrics.soilMoisture.max,
+      },
+      lightLux: {
+        min: profile.metrics.lightLux.min,
+        max: profile.metrics.lightLux.max,
+      },
+    };
+  }
+
+  try {
+    const response = await apiClient.get<PlantMetrics>(
+      `/plant-types/${plantType}`
+    );
+    return response.data;
+  } catch (error) {
+    console.error("Failed to get plant type metrics", error);
+    throw error;
+  }
+}
+
+export async function setDevicePlantType(
+  deviceId: string,
+  plantType: string
+): Promise<{ deviceId: string; plantType: string; status: string }> {
+  if (USE_MOCK_API) {
+    // Mock response
+    return {
+      deviceId,
+      plantType,
+      status: "set",
+    };
+  }
+
+  try {
+    const response = await apiClient.post<{
+      deviceId: string;
+      plantType: string;
+      status: string;
+    }>(`/devices/${deviceId}/plant-type`, { plantType });
+    return response.data;
+  } catch (error) {
+    console.error("Failed to set device plant type", error);
+    throw error;
+  }
+}
+
