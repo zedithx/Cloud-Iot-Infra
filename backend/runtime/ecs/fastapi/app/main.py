@@ -10,6 +10,7 @@ from boto3.dynamodb.conditions import Key
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from datetime import datetime, timezone
 
 
 TABLE_NAME = os.environ.get("TELEMETRY_TABLE")
@@ -179,6 +180,39 @@ def _from_decimal(value: Any) -> Any:
     return value
 
 
+def _to_epoch_seconds(value: Any) -> int:
+    """
+    Convert various timestamp representations to epoch seconds (int).
+    Accepts:
+    - int or numeric strings
+    - typed keys like 'TS#20240101T120000Z-abc123' or 'DISEASE#20240101T120000Z'
+      (parses the ISO-like core and ignores suffix/prefix)
+    - ISO-like 'YYYYMMDDTHHMMSSZ' with optional '-suffix'
+    Falls back to 0 on failure.
+    """
+    if isinstance(value, (int, float)):
+        return int(value)
+    s = str(value)
+    # Strip type prefixes
+    for prefix in ("TS#", "DISEASE#"):
+        if s.startswith(prefix):
+            s = s[len(prefix) :]
+            break
+    # Remove suffix after first '-' if present
+    core = s.split("-", 1)[0]
+    # Try plain integer
+    try:
+        return int(core)
+    except ValueError:
+        pass
+    # Try ISO-like format YYYYMMDDTHHMMSSZ
+    try:
+        dt = datetime.strptime(core, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except Exception:
+        return 0
+
+
 def _derive_disease_flag(score: Optional[float], explicit: Optional[bool]) -> Optional[bool]:
     if explicit is not None:
         return explicit
@@ -196,7 +230,7 @@ def _normalise_item(item: Dict[str, Any]) -> Dict[str, Any]:
     if "deviceId" not in data:
         data["deviceId"] = plant_id
     if "timestamp" in data:
-        data["timestamp"] = int(data["timestamp"])
+        data["timestamp"] = _to_epoch_seconds(data["timestamp"])
     score = float(data["score"]) if "score" in data and data["score"] is not None else None
     data["score"] = score
     data["disease"] = _derive_disease_flag(score, data.get("disease"))

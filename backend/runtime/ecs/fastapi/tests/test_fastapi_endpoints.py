@@ -33,8 +33,6 @@ from pathlib import Path
 fastapi_dir = Path(__file__).resolve().parents[3] / "runtime" / "ecs" / "fastapi"
 sys.path.insert(0, str(fastapi_dir))
 
-from app.main import app
-
 
 @pytest.fixture
 def dynamodb_table():
@@ -79,7 +77,9 @@ def client(dynamodb_table, monkeypatch):
         main_module.iot_client = iot_data_client
 
         # Create test client
-        with TestClient(app) as test_client:
+        # Import FastAPI app AFTER env vars and clients are set up
+        from app.main import app as fastapi_app
+        with TestClient(fastapi_app) as test_client:
             yield test_client
 
 
