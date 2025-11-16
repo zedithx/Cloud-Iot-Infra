@@ -103,7 +103,7 @@ def _build_reading_item(device_id: str, timestamp: str, message: Dict[str, Any])
     sanitized_raw = _convert_value(message)
     return {
         "deviceId": device_id,
-        "timestamp": timestamp,
+        "timestamp": f"TS#{timestamp}",
         "readingType": TELEMETRY_READING_TYPE,
         "metrics": metrics,
         "raw": sanitized_raw,

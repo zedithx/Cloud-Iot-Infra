@@ -84,26 +84,27 @@ def _load_threshold(device_id: str) -> Optional[Decimal]:
 
 def _load_latest_disease_score(device_id: str) -> Optional[float]:
     resp = table.query(
-        KeyConditionExpression=Key("deviceId").eq(device_id),
+        KeyConditionExpression=Key("deviceId").eq(device_id)
+        & Key("timestamp").begins_with("DISEASE#"),
         ScanIndexForward=False,
-        Limit=20,
+        Limit=1,
     )
-    for item in resp.get("Items", []):
-        if item.get("readingType") != DISEASE_READING:
-            continue
-        metrics = item.get("metrics", {})
-        score = metrics.get("diseaseRisk")
-        if score is not None:
-            decimal_score = _to_decimal(score)
-            return float(decimal_score) if decimal_score is not None else None
+    items = resp.get("Items", [])
+    if not items:
+        return None
+    metrics = items[0].get("metrics", {})
+    score = metrics.get("diseaseRisk")
+    if score is not None:
+        decimal_score = _to_decimal(score)
+        return float(decimal_score) if decimal_score is not None else None
     return None
 
 
 def _compute_environment_averages(
     device_id: str, window_start: datetime, window_end: datetime
 ) -> Dict[str, float]:
-    start_key = _timestamp_prefix(window_start, low=True)
-    end_key = _timestamp_prefix(window_end, low=False)
+    start_key = f"TS#{_timestamp_prefix(window_start, low=True)}"
+    end_key = f"TS#{_timestamp_prefix(window_end, low=False)}"
 
     resp = table.query(
         KeyConditionExpression=Key("deviceId").eq(device_id)

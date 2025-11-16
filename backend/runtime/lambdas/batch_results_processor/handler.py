@@ -37,7 +37,7 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
                 logger.warning("Unable to determine deviceId for payload %s from %s", payload, key)
                 continue
             disease_score = _extract_score(payload)
-            timestamp = _current_timestamp()
+            timestamp = f"DISEASE#{_current_timestamp()}"
             item = {
                 "deviceId": device_id,
                 "timestamp": timestamp,

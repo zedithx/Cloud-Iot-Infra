@@ -497,11 +497,33 @@ def set_device_plant_type(device_id: str, request: PlantTypeRequest) -> Dict[str
             detail=f"Plant type '{request.plantType}' not found. Available types: {', '.join(PLANT_TYPE_METRICS.keys())}",
         )
 
-    # Store plant type in DynamoDB (similar to how threshold is stored)
+    # Get plant type metrics
+    metrics = PLANT_TYPE_METRICS[plant_type_lower]
+
+    # Store plant type and metrics in DynamoDB (similar to how threshold is stored)
     config_item: Dict[str, Any] = {
         "deviceId": device_id,
         "timestamp": "CONFIG",
         "plantType": plant_type_lower,
+        # Store the metrics for easy retrieval
+        "plantTypeMetrics": {
+            "temperatureC": {
+                "min": _to_decimal(metrics["temperatureC"]["min"]),
+                "max": _to_decimal(metrics["temperatureC"]["max"]),
+            },
+            "humidity": {
+                "min": _to_decimal(metrics["humidity"]["min"]),
+                "max": _to_decimal(metrics["humidity"]["max"]),
+            },
+            "soilMoisture": {
+                "min": _to_decimal(metrics["soilMoisture"]["min"]),
+                "max": _to_decimal(metrics["soilMoisture"]["max"]),
+            },
+            "lightLux": {
+                "min": _to_decimal(metrics["lightLux"]["min"]),
+                "max": _to_decimal(metrics["lightLux"]["max"]),
+            },
+        },
     }
 
     telemetry_table.put_item(Item=config_item)
