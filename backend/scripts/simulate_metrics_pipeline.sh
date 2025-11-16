@@ -4,36 +4,29 @@
 # Requirements:
 #   - AWS CLI v2 configured with credentials that can access the deployed stack.
 #   - Environment variables set prior to execution:
-#       STAGE             Deployment stage (e.g., dev)
 #       REGION            AWS region (e.g., ap-southeast-1)
 #       ACCOUNT_ID        AWS account ID
-#       TELEMETRY_TABLE   DynamoDB table name (e.g., dev-telemetry)
-#       RESULTS_BUCKET    S3 bucket for SageMaker batch results
-#       METRICS_LAMBDA    Metrics evaluator Lambda function name
+#       TELEMETRY_TABLE   DynamoDB table name (auto-discovered if unset)
+#       METRICS_LAMBDA    Metrics evaluator Lambda function name (auto-discovered if unset)
 #   - Optional overrides:
 #       DEVICE_ID (default: device-2)
-#       TELEMETRY_TOPIC (default: leaf/telemetry/$STAGE/$DEVICE_ID/data)
+#       TELEMETRY_TOPIC (default: leaf/telemetry/$DEVICE_ID/data)
 #       PLANT_TYPE (default: simulation)
 #       THRESHOLD (default: 0.75)
 #       READINGS_PER_BATCH (default: 30)
 #       PUBLISH_DELAY (default: 0.2 seconds)
-#       RESULTS_KEY_PREFIX (default: $STAGE/manual-tests/$DEVICE_ID)
+#       RESULTS_KEY_PREFIX (default: manual-tests/$DEVICE_ID)
 #
 # Usage:
-#   STAGE=dev REGION=ap-southeast-1 ACCOUNT_ID=123456789012 \
-#   TELEMETRY_TABLE=dev-telemetry RESULTS_BUCKET=my-batch-results \
-#   METRICS_LAMBDA=dev-infrastructure-Scheduling-MetricsEvaluatorFunctionXYZ \
+#   REGION=ap-southeast-1 ACCOUNT_ID=123456789012 \
+#   TELEMETRY_TABLE=<auto|optional> METRICS_LAMBDA=<auto|optional> \
 #   ./scripts/simulate_device2_pipeline.sh
 
 set -Eeuo pipefail
 
 REQUIRED_VARS=(
-  STAGE
   REGION
   ACCOUNT_ID
-  TELEMETRY_TABLE
-  RESULTS_BUCKET
-  METRICS_LAMBDA
 )
 
 require_env() {
@@ -48,13 +41,94 @@ for var in "${REQUIRED_VARS[@]}"; do
   require_env "${var}"
 done
 
+# -----------------------------------------------------------------------------
+# Auto-discover TELEMETRY_TABLE, METRICS_LAMBDA if not provided
+# -----------------------------------------------------------------------------
+discover_telemetry_table() {
+  local table=""
+  local stacks
+  stacks=$(aws cloudformation list-stacks \
+    --region "${REGION}" \
+    --query "StackSummaries[?StackStatus=='CREATE_COMPLETE'||StackStatus=='UPDATE_COMPLETE'].StackName" \
+    --output text 2>/dev/null || true)
+  for s in ${stacks}; do
+    table=$(aws cloudformation list-stack-resources \
+      --region "${REGION}" \
+      --stack-name "${s}" \
+      --query "StackResourceSummaries[?LogicalResourceId=='TelemetryTable' && ResourceType=='AWS::DynamoDB::Table'].PhysicalResourceId" \
+      --output text 2>/dev/null || true)
+    if [[ -n "${table}" && "${table}" != "None" ]]; then
+      echo "${table}"
+      return 0
+    fi
+  done
+  table=$(aws dynamodb list-tables \
+    --region "${REGION}" \
+    --query "TableNames[?ends_with(@, '-telemetry')]|[0]" \
+    --output text 2>/dev/null || true)
+  if [[ -n "${table}" && "${table}" != "None" ]]; then
+    echo "${table}"
+    return 0
+  fi
+  return 1
+}
+
+discover_metrics_lambda() {
+  local fn=""
+  fn=$(aws lambda list-functions \
+    --region "${REGION}" \
+    --query "Functions[?contains(FunctionName,'MetricsEvaluator')].FunctionName | [0]" \
+    --output text 2>/dev/null || true)
+  if [[ -n "${fn}" && "${fn}" != "None" ]]; then
+    echo "${fn}"
+    return 0
+  fi
+  local stacks
+  stacks=$(aws cloudformation list-stacks \
+    --region "${REGION}" \
+    --query "StackSummaries[?StackStatus=='CREATE_COMPLETE'||StackStatus=='UPDATE_COMPLETE'].StackName" \
+    --output text 2>/dev/null || true)
+  for s in ${stacks}; do
+    fn=$(aws cloudformation list-stack-resources \
+      --region "${REGION}" \
+      --stack-name "${s}" \
+      --query "StackResourceSummaries[?ResourceType=='AWS::Lambda::Function' && contains(LogicalResourceId,'MetricsEvaluator')].PhysicalResourceId" \
+      --output text 2>/dev/null || true)
+    if [[ -n "${fn}" && "${fn}" != "None" ]]; then
+      echo "${fn}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ -z "${TELEMETRY_TABLE:-}" ]]; then
+  if tt=$(discover_telemetry_table); then
+    TELEMETRY_TABLE="${tt}"
+    echo "Auto-discovered TELEMETRY_TABLE=${TELEMETRY_TABLE}"
+  else
+    echo "ERROR: Could not auto-discover TELEMETRY_TABLE. Set TELEMETRY_TABLE env var." >&2
+    exit 1
+  fi
+fi
+
+if [[ -z "${METRICS_LAMBDA:-}" ]]; then
+  if ml=$(discover_metrics_lambda); then
+    METRICS_LAMBDA="${ml}"
+    echo "Auto-discovered METRICS_LAMBDA=${METRICS_LAMBDA}"
+  else
+    echo "ERROR: Could not auto-discover METRICS_LAMBDA. Set METRICS_LAMBDA env var." >&2
+    exit 1
+  fi
+fi
+
 DEVICE_ID=${DEVICE_ID:-device-2}
-TELEMETRY_TOPIC=${TELEMETRY_TOPIC:-"leaf/telemetry/${STAGE}/${DEVICE_ID}/data"}
+TELEMETRY_TOPIC=${TELEMETRY_TOPIC:-"leaf/telemetry/${DEVICE_ID}/data"}
 PLANT_TYPE=${PLANT_TYPE:-simulation}
 THRESHOLD=${THRESHOLD:-0.75}
 READINGS_PER_BATCH=${READINGS_PER_BATCH:-30}
 PUBLISH_DELAY=${PUBLISH_DELAY:-0.2}
-RESULTS_KEY_PREFIX=${RESULTS_KEY_PREFIX:-"${STAGE}/manual-tests/${DEVICE_ID}"}
+RESULTS_KEY_PREFIX=${RESULTS_KEY_PREFIX:-"manual-tests/${DEVICE_ID}"}
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
@@ -134,13 +208,19 @@ PY
 upload_disease_result() {
   local score="$1"
   local label="$2"
-  log_section "Uploading batch transform result (${label}, score=${score})"
-  local key="${RESULTS_KEY_PREFIX}/${label}-$(date -u +%Y%m%dT%H%M%S).jsonl"
-  local tmp_file="${TMP_DIR}/result.jsonl"
-  printf '{"deviceId":"%s","diseaseRisk":%.2f}\n' "${DEVICE_ID}" "${score}" >"${tmp_file}"
-
-  aws s3 cp "${tmp_file}" "s3://${RESULTS_BUCKET}/${key}" --region "${REGION}"
-  echo "Uploaded to s3://${RESULTS_BUCKET}/${key}"
+  log_section "Writing disease result to DynamoDB (${label}, score=${score})"
+  local ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  aws dynamodb put-item \
+    --region "${REGION}" \
+    --table-name "${TELEMETRY_TABLE}" \
+    --item "{
+      \"deviceId\": {\"S\": \"${DEVICE_ID}\"},
+      \"timestamp\": {\"S\": \"DISEASE#${ts}\"},
+      \"readingType\": {\"S\": \"disease\"},
+      \"metrics\": {\"M\": {\"diseaseRisk\": {\"N\": \"${score}\"}}},
+      \"source\": {\"S\": \"simulation\"},
+      \"label\": {\"S\": \"${label}\"}
+    }"
 }
 
 invoke_metrics_evaluator() {

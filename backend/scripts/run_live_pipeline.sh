@@ -7,14 +7,14 @@
 #     ./scripts/run_live_pipeline.sh device-1
 #
 # Required environment variables:
-#   STAGE               - Deployment stage (e.g., dev, prod)
 #   REGION              - AWS region (e.g., ap-southeast-1)
 #   ACCOUNT_ID          - AWS account ID
-#   RESULTS_BUCKET      - Batch results S3 bucket name
-#   METRICS_LAMBDA      - Metrics evaluator Lambda function name
+#   TELEMETRY_TABLE     - DynamoDB telemetry table name (auto-discovered if unset)
+#   RESULTS_BUCKET      - Batch results S3 bucket name (auto-discovered if unset)
+#   METRICS_LAMBDA      - Metrics evaluator Lambda function name (auto-discovered if unset)
 #
 # Optional:
-#   TELEMETRY_TOPIC - Override IoT topic (defaults to leaf/telemetry/$STAGE/$DEVICE/data)
+#   TELEMETRY_TOPIC - Override IoT topic (defaults to leaf/telemetry/$DEVICE/data)
 
 set -euo pipefail
 
@@ -25,15 +25,97 @@ if [[ -z "${DEVICE_ID}" ]]; then
   exit 1
 fi
 
-: "${STAGE:?STAGE must be set}"
 : "${REGION:?REGION must be set}"
 : "${ACCOUNT_ID:?ACCOUNT_ID must be set}"
-: "${RESULTS_BUCKET:?RESULTS_BUCKET must be set}"
-: "${METRICS_LAMBDA:?METRICS_LAMBDA must be set}"
 
-TOPIC=${TELEMETRY_TOPIC:-"leaf/telemetry/${STAGE}/${DEVICE_ID}/data"}
+# -----------------------------------------------------------------------------
+# Auto-discover TELEMETRY_TABLE, RESULTS_BUCKET and METRICS_LAMBDA if not provided
+# -----------------------------------------------------------------------------
+discover_telemetry_table() {
+  # Prefer CloudFormation logical id 'TelemetryTable'
+  local table=""
+  local stacks
+  stacks=$(aws cloudformation list-stacks \
+    --region "${REGION}" \
+    --query "StackSummaries[?StackStatus=='CREATE_COMPLETE'||StackStatus=='UPDATE_COMPLETE'].StackName" \
+    --output text 2>/dev/null || true)
+  for s in ${stacks}; do
+    table=$(aws cloudformation list-stack-resources \
+      --region "${REGION}" \
+      --stack-name "${s}" \
+      --query "StackResourceSummaries[?LogicalResourceId=='TelemetryTable' && ResourceType=='AWS::DynamoDB::Table'].PhysicalResourceId" \
+      --output text 2>/dev/null || true)
+    if [[ -n "${table}" && "${table}" != "None" ]]; then
+      echo "${table}"
+      return 0
+    fi
+  done
+  # Fallback: pick a table that ends with '-telemetry'
+  table=$(aws dynamodb list-tables \
+    --region "${REGION}" \
+    --query "TableNames[?ends_with(@, '-telemetry')]|[0]" \
+    --output text 2>/dev/null || true)
+  if [[ -n "${table}" && "${table}" != "None" ]]; then
+    echo "${table}"
+    return 0
+  fi
+  return 1
+}
+
+discover_metrics_lambda() {
+  # Try Lambda list-functions by name pattern
+  local fn=""
+  fn=$(aws lambda list-functions \
+    --region "${REGION}" \
+    --query "Functions[?contains(FunctionName,'MetricsEvaluator')].FunctionName | [0]" \
+    --output text 2>/dev/null || true)
+  if [[ -n "${fn}" && "${fn}" != "None" ]]; then
+    echo "${fn}"
+    return 0
+  fi
+  # Try CloudFormation: look for Lambda function with logical id containing MetricsEvaluator
+  local stacks
+  stacks=$(aws cloudformation list-stacks \
+    --region "${REGION}" \
+    --query "StackSummaries[?StackStatus=='CREATE_COMPLETE'||StackStatus=='UPDATE_COMPLETE'].StackName" \
+    --output text 2>/dev/null || true)
+  for s in ${stacks}; do
+    fn=$(aws cloudformation list-stack-resources \
+      --region "${REGION}" \
+      --stack-name "${s}" \
+      --query "StackResourceSummaries[?ResourceType=='AWS::Lambda::Function' && contains(LogicalResourceId,'MetricsEvaluator')].PhysicalResourceId" \
+      --output text 2>/dev/null || true)
+    if [[ -n "${fn}" && "${fn}" != "None" ]]; then
+      echo "${fn}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ -z "${METRICS_LAMBDA:-}" ]]; then
+  if ml=$(discover_metrics_lambda); then
+    METRICS_LAMBDA="${ml}"
+    echo "Auto-discovered METRICS_LAMBDA=${METRICS_LAMBDA}"
+  else
+    echo "ERROR: Could not auto-discover METRICS_LAMBDA. Set METRICS_LAMBDA env var." >&2
+    exit 1
+  fi
+fi
+
+if [[ -z "${TELEMETRY_TABLE:-}" ]]; then
+  if tt=$(discover_telemetry_table); then
+    TELEMETRY_TABLE="${tt}"
+    echo "Auto-discovered TELEMETRY_TABLE=${TELEMETRY_TABLE}"
+  else
+    echo "ERROR: Could not auto-discover TELEMETRY_TABLE. Set TELEMETRY_TABLE env var." >&2
+    exit 1
+  fi
+fi
+
+TOPIC=${TELEMETRY_TOPIC:-"leaf/telemetry/${DEVICE_ID}/data"}
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-RESULT_KEY="${STAGE}/$(date -u +%Y-%m-%d)/mock-result-${DEVICE_ID}.jsonl"
+RESULT_KEY="$(date -u +%Y-%m-%d)/mock-result-${DEVICE_ID}.jsonl"
 
 echo "Publishing telemetry to IoT topic: ${TOPIC}"
 aws iot-data publish \
@@ -84,6 +166,5 @@ aws lambda invoke \
 echo "Metrics evaluator response:"
 cat /tmp/metrics-output.json
 echo
-
-echo "Done. Check DynamoDB table ${STAGE}-telemetry and SNS/Email for alerts."
+echo "Done. Check DynamoDB table ${TELEMETRY_TABLE} and SNS/Email for alerts."
 
