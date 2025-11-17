@@ -467,12 +467,9 @@ def send_actuator_command(device_id: str, command: ActuatorCommand) -> Dict[str,
             )
 
     # Publish to IoT Core
-    topic = f"leaf/commands/{device_id}"
+    topic = f"leaf/commands/{device_id}/{command.actuator}"
     payload = {
-        "actuator": command.actuator,
         "targetValue": command.targetValue,
-        "metric": command.metric,
-        "timestamp": int(time.time()),
     }
 
     try:

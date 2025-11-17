@@ -165,21 +165,19 @@ publish_telemetry_batch() {
 
   log_section "Publishing ${READINGS_PER_BATCH} telemetry readings (${label})"
   for offset in $(seq 1 "${READINGS_PER_BATCH}"); do
-    payload=$(python - "${DEVICE_ID}" "${THRESHOLD}" "${PLANT_TYPE}" "${READINGS_PER_BATCH}" "${base_temp}" "${base_humidity}" "${base_moisture}" "${base_lux}" "${offset}" <<'PY'
+    payload=$(python - "${DEVICE_ID}" "${READINGS_PER_BATCH}" "${base_temp}" "${base_humidity}" "${base_moisture}" "${base_lux}" "${offset}" <<'PY'
 import json
 import random
 import sys
 from datetime import datetime, timedelta, timezone
 
 device_id = sys.argv[1]
-threshold = float(sys.argv[2])
-plant_type = sys.argv[3]
-count = int(sys.argv[4])
-base_temp = float(sys.argv[5])
-base_humidity = float(sys.argv[6])
-base_moisture = float(sys.argv[7])
-base_lux = float(sys.argv[8])
-offset = int(sys.argv[9])
+count = int(sys.argv[2])
+base_temp = float(sys.argv[3])
+base_humidity = float(sys.argv[4])
+base_moisture = float(sys.argv[5])
+base_lux = float(sys.argv[6])
+offset = int(sys.argv[7])
 
 start = datetime.now(timezone.utc) - timedelta(minutes=count - offset)
 payload = {
@@ -188,8 +186,6 @@ payload = {
     "humidity": round(random.normalvariate(base_humidity, 1.5), 2),
     "soilMoisture": round(random.normalvariate(base_moisture, 0.02), 2),
     "lightLux": round(random.normalvariate(base_lux, 50), 2),
-    "plantType": plant_type,
-    "threshold": threshold,
     "timestamp": start.isoformat()
 }
 

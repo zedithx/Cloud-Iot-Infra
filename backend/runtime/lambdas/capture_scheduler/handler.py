@@ -17,7 +17,6 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     payload = {
         "scheduledTime": event.get("time"),
         "bucket": bucket_name,
-        "objectKey": object_key,
         "note": "Placeholder artifact. Replace with image capture integration.",
     }
 

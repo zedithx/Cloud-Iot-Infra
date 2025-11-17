@@ -85,8 +85,6 @@ def _simulate() -> None:
             "humidity": "61.0",
             "soilMoisture": "0.32",
             "lightLux": "1200",
-            "plantType": "tomato",
-            "threshold": "0.75",
             "timestamp": _now_iso(-20),
         },
         {
