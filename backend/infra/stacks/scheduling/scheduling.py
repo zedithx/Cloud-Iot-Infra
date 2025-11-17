@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from aws_cdk import Duration, aws_events as events, aws_events_targets as targets, aws_lambda as lambda_, aws_logs as logs
+from aws_cdk import Duration, aws_events as events, aws_events_targets as targets, aws_iam, aws_lambda as lambda_, aws_logs as logs
 from constructs import Construct
 
 from infra.config.app_context import AppContext
@@ -52,12 +52,31 @@ class SchedulingConstruct(Construct):
             timeout=Duration.seconds(30),
             log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
+                "DYNAMO_TABLE_NAME": data_plane.telemetry_table.table_name,
+                "AWS_REGION": app_context.env.region or "us-east-1",
                 "RAW_BUCKET_NAME": data_plane.raw_images_bucket.bucket_name,
-                "CAPTURE_PREFIX": f"{app_context.stage}/scheduled",
+                "PHOTO_PREFIX": "photos",
+                "PRESIGNED_URL_EXPIRY": "3600",  # 1 hour
             },
         )
 
+        # Grant DynamoDB read access to list device IDs
+        data_plane.telemetry_table.grant_read_data(capture_lambda)
+
+        # Grant S3 permissions to generate presigned URLs
         data_plane.raw_images_bucket.grant_put(capture_lambda)
+
+        # Grant IoT Core publish permissions for leaf/commands/*/photo topics
+        account = app_context.env.account or "*"
+        region = app_context.env.region or "*"
+        capture_lambda.add_to_role_policy(
+            aws_iam.PolicyStatement(
+                actions=["iot:Publish"],
+                resources=[
+                    f"arn:aws:iot:{region}:{account}:topic/leaf/commands/*/photo",
+                ],
+            )
+        )
 
         hourly_rule = events.Rule(
             self,

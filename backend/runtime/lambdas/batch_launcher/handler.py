@@ -18,7 +18,7 @@ STAGE = os.environ["STAGE"]
 def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-    input_prefix = f"{STAGE}/"
+    input_prefix = "photos/"
     output_prefix = f"{STAGE}/{timestamp}/"
 
     transform_job_name = f"{STAGE}-leaf-batch-{int(time.time())}"

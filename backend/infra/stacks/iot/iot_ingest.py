@@ -101,6 +101,9 @@ class IotIngestConstruct(Construct):
             source_arn=telemetry_topic_rule.attr_arn,
         )
 
+        # Photo uploads are now handled via presigned URLs sent in capture commands
+        # Devices upload directly to S3, so no IoT rule needed
+
         return IotIngestResources(
             device_policy=device_policy,
             telemetry_topic_rule=telemetry_topic_rule,
