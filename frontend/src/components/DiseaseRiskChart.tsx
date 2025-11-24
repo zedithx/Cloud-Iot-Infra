@@ -11,7 +11,7 @@ import {
 import { format } from "date-fns";
 import type { PlantTimeSeriesPoint } from "@/types/telemetry";
 
-type TimeseriesChartProps = {
+type DiseaseRiskChartProps = {
   points: PlantTimeSeriesPoint[];
 };
 
@@ -24,7 +24,7 @@ function formatPoints(points: PlantTimeSeriesPoint[]): ChartDatum[] {
   }));
 }
 
-export default function TimeseriesChart({ points }: TimeseriesChartProps) {
+export default function DiseaseRiskChart({ points }: DiseaseRiskChartProps) {
   if (!points.length) {
     return (
       <div className="card-surface text-sm text-emerald-700/80">
@@ -38,8 +38,8 @@ export default function TimeseriesChart({ points }: TimeseriesChartProps) {
   return (
     <div className="card-surface border-dashed border-emerald-200/80 bg-white/95">
       <h3 className="mb-3 flex items-center gap-2 text-base font-semibold text-emerald-900 sm:mb-4 sm:text-lg">
-        <span aria-hidden>📈</span>
-        Growth conditions
+        <span aria-hidden>🦠</span>
+        Disease risk
       </h3>
       <div className="h-[18rem] w-full sm:h-80">
         <ResponsiveContainer>
@@ -47,15 +47,9 @@ export default function TimeseriesChart({ points }: TimeseriesChartProps) {
             <CartesianGrid strokeDasharray="6 6" stroke="#bbf7d0" />
             <XAxis dataKey="label" tick={{ fill: "#047857", fontSize: 12 }} />
             <YAxis
-              yAxisId="left"
               tick={{ fill: "#047857", fontSize: 12 }}
-              domain={["auto", "auto"]}
-            />
-            <YAxis
-              yAxisId="right"
-              orientation="right"
-              tick={{ fill: "#047857", fontSize: 12 }}
-              domain={["auto", "auto"]}
+              domain={[0, 1]}
+              tickFormatter={(value) => `${Math.round(value * 100)}%`}
             />
             <Tooltip
               contentStyle={{
@@ -65,40 +59,16 @@ export default function TimeseriesChart({ points }: TimeseriesChartProps) {
                 color: "#065f46"
               }}
               labelStyle={{ color: "#047857", fontWeight: 600 }}
+              formatter={(value: number) => [
+                `${Math.round((value ?? 0) * 100)}%`,
+                "Disease risk"
+              ]}
             />
             <Line
-              yAxisId="left"
               type="monotone"
-              dataKey="temperatureC"
-              name="Temperature °C"
-              stroke="#ef4444"
-              strokeWidth={2}
-              dot={false}
-            />
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="humidity"
-              name="Humidity %"
-              stroke="#3b82f6"
-              strokeWidth={2}
-              dot={false}
-            />
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="soilMoisture"
-              name="Soil moisture"
-              stroke="#22c55e"
-              strokeWidth={2}
-              dot={false}
-            />
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="lightLux"
-              name="Light intensity (lux)"
-              stroke="#eab308"
+              dataKey="score"
+              name="Disease risk"
+              stroke="#f97316"
               strokeWidth={2}
               dot={false}
             />

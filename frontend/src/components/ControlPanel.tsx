@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { sendActuatorCommand, type ActuatorCommand } from "@/lib/api";
 
+// localStorage key prefix for persisting actuator state
+const getStorageKey = (plantId: string, action: ActionKey, type: "loading" | "cooldown") =>
+  `actuator_${plantId}_${action}_${type}`;
+
 type ToggleState = "idle" | "pending" | "success" | "error";
 
 type ControlPanelProps = {
@@ -120,6 +124,56 @@ export default function ControlPanel({
     fan: 0,
   });
 
+  // Load persisted state from localStorage on mount
+  useEffect(() => {
+    const now = Date.now();
+    const loadedLoadingStartTime: Record<ActionKey, number | null> = {
+      lights: null,
+      pump: null,
+      fan: null,
+    };
+    const loadedLastActivationTime: Record<ActionKey, number | null> = {
+      lights: null,
+      pump: null,
+      fan: null,
+    };
+
+    (Object.keys(ACTION_META) as ActionKey[]).forEach((action) => {
+      // Load loading start time
+      const loadingKey = getStorageKey(plantId, action, "loading");
+      const storedLoading = localStorage.getItem(loadingKey);
+      if (storedLoading) {
+        const loadingStart = parseInt(storedLoading, 10);
+        const elapsed = Math.floor((now - loadingStart) / 1000);
+        if (elapsed < LOADING_SECONDS) {
+          // Still in loading period
+          loadedLoadingStartTime[action] = loadingStart;
+        } else {
+          // Loading completed, clear it
+          localStorage.removeItem(loadingKey);
+        }
+      }
+
+      // Load cooldown start time
+      const cooldownKey = getStorageKey(plantId, action, "cooldown");
+      const storedCooldown = localStorage.getItem(cooldownKey);
+      if (storedCooldown) {
+        const cooldownStart = parseInt(storedCooldown, 10);
+        const elapsed = Math.floor((now - cooldownStart) / 1000);
+        if (elapsed < COOLDOWN_SECONDS) {
+          // Still in cooldown period
+          loadedLastActivationTime[action] = cooldownStart;
+        } else {
+          // Cooldown completed, clear it
+          localStorage.removeItem(cooldownKey);
+        }
+      }
+    });
+
+    setLoadingStartTime(loadedLoadingStartTime);
+    setLastActivationTime(loadedLastActivationTime);
+  }, [plantId]);
+
   // Update loading and cooldown timers every second
   useEffect(() => {
     const interval = setInterval(() => {
@@ -140,6 +194,8 @@ export default function ControlPanel({
               setLastActivationTime((prevTime) => {
                 // Only set if not already set (to avoid overwriting)
                 if (prevTime[action] === null) {
+                  const cooldownKey = getStorageKey(plantId, action, "cooldown");
+                  localStorage.setItem(cooldownKey, now.toString());
                   return {
                     ...prevTime,
                     [action]: now,
@@ -147,10 +203,14 @@ export default function ControlPanel({
                 }
                 return prevTime;
               });
-              setLoadingStartTime((prevTime) => ({
-                ...prevTime,
-                [action]: null,
-              }));
+              setLoadingStartTime((prevTime) => {
+                const loadingKey = getStorageKey(plantId, action, "loading");
+                localStorage.removeItem(loadingKey);
+                return {
+                  ...prevTime,
+                  [action]: null,
+                };
+              });
             }
           } else {
             updated[action] = 0;
@@ -168,6 +228,16 @@ export default function ControlPanel({
             const elapsed = Math.floor((now - lastTime) / 1000);
             const remaining = Math.max(0, COOLDOWN_SECONDS - elapsed);
             updated[action] = remaining;
+            
+            // Clean up localStorage when cooldown completes
+            if (remaining === 0) {
+              const cooldownKey = getStorageKey(plantId, action, "cooldown");
+              localStorage.removeItem(cooldownKey);
+              setLastActivationTime((prevTime) => ({
+                ...prevTime,
+                [action]: null,
+              }));
+            }
           } else {
             updated[action] = 0;
           }
@@ -196,6 +266,55 @@ export default function ControlPanel({
       return `${minutes}m ${secs}s`;
     }
     return `${secs}s`;
+  }
+
+  function generateRangeOptions(
+    currentValue: number,
+    meta: (typeof ACTION_META)[ActionKey]
+  ): Array<{ value: string; label: string }> {
+    const options: Array<{ value: string; label: string }> = [];
+    
+    if (meta.metric === "soilMoisture") {
+      // Soil moisture: current ± 10%, 20%, 30% in 5% increments
+      const currentPercent = currentValue;
+      const ranges = [-30, -25, -20, -15, -10, -5, 5, 10, 15, 20, 25, 30];
+      ranges.forEach((delta) => {
+        const target = Math.max(0, Math.min(100, currentPercent + delta));
+        if (target >= 0 && target <= 100) {
+          options.push({
+            value: (target / 100).toFixed(2), // Convert to 0-1 range for API
+            label: `${target}% ${delta > 0 ? `(+${delta}%)` : `(${delta}%)`}`,
+          });
+        }
+      });
+    } else if (meta.metric === "temperatureC") {
+      // Temperature: current ± 1°C, 2°C, 3°C, 5°C, 10°C
+      const ranges = [-10, -5, -3, -2, -1, 1, 2, 3, 5, 10];
+      ranges.forEach((delta) => {
+        const target = currentValue + delta;
+        if (target >= meta.min && target <= meta.max) {
+          options.push({
+            value: target.toFixed(1),
+            label: `${target}°C ${delta > 0 ? `(+${delta}°C)` : `(${delta}°C)`}`,
+          });
+        }
+      });
+    } else if (meta.metric === "lightLux") {
+      // Light: current ± 10%, 20%, 30%, 50% in 5% increments
+      const ranges = [-50, -40, -30, -25, -20, -15, -10, -5, 5, 10, 15, 20, 25, 30, 40, 50];
+      ranges.forEach((delta) => {
+        const target = Math.round(currentValue * (1 + delta / 100));
+        if (target >= meta.min && target <= meta.max) {
+          options.push({
+            value: target.toString(),
+            label: `${target.toLocaleString()} lux ${delta > 0 ? `(+${delta}%)` : `(${delta}%)`}`,
+          });
+        }
+      });
+    }
+    
+    // Sort by value
+    return options.sort((a, b) => parseFloat(a.value) - parseFloat(b.value));
   }
 
   async function trigger(action: ActionKey) {
@@ -236,7 +355,16 @@ export default function ControlPanel({
     setState((prev) => ({ ...prev, [action]: "pending" }));
 
     try {
-      const parsedValue = meta.parseValue(targetValueNum);
+      // For soil moisture, if the value is already in 0-1 range (from dropdown), use it directly
+      // Otherwise, parse it (for manual input in percentage)
+      let parsedValue: number;
+      if (meta.metric === "soilMoisture" && targetValueNum <= 1.0) {
+        // Value is already in 0-1 range (from dropdown)
+        parsedValue = targetValueNum;
+      } else {
+        // Value is in percentage or other format, use parseValue
+        parsedValue = meta.parseValue(targetValueNum);
+      }
       const command: ActuatorCommand = {
         actuator: action,
         targetValue: parsedValue,
@@ -248,6 +376,8 @@ export default function ControlPanel({
       
       // Start loading state (20 seconds)
       const now = Date.now();
+      const loadingKey = getStorageKey(plantId, action, "loading");
+      localStorage.setItem(loadingKey, now.toString());
       setLoadingStartTime((prev) => ({
         ...prev,
         [action]: now,
@@ -340,25 +470,67 @@ export default function ControlPanel({
                 </div>
 
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={meta.min}
-                      max={meta.max}
-                      step={meta.step}
-                      value={targetValues[action]}
-                      onChange={(e) =>
-                        setTargetValues((prev) => ({
-                          ...prev,
-                          [action]: e.target.value,
-                        }))
-                      }
-                      placeholder={`Target ${meta.unit}`}
-                      disabled={isPending || isLoading || isOnCooldown}
-                      className="flex-1 rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-500"
-                    />
-                    <span className="text-xs text-emerald-600">{meta.unit}</span>
+                  {/* Show which metric is being controlled */}
+                  <div className="flex items-center gap-2 text-xs text-emerald-600">
+                    <span className="font-medium">Controlling:</span>
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5">
+                      {meta.metric === "soilMoisture" && "Soil Moisture"}
+                      {meta.metric === "temperatureC" && "Temperature"}
+                      {meta.metric === "lightLux" && "Light Intensity"}
+                    </span>
                   </div>
+                  
+                  {/* Range selector based on current value */}
+                  {currentValue !== null ? (
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-emerald-700">
+                        Select target value (current: {currentValue.toFixed(meta.metric === "lightLux" ? 0 : 1)} {meta.unit})
+                      </label>
+                      <select
+                        value={targetValues[action]}
+                        onChange={(e) =>
+                          setTargetValues((prev) => ({
+                            ...prev,
+                            [action]: e.target.value,
+                          }))
+                        }
+                        disabled={isPending || isLoading || isOnCooldown}
+                        className="w-full rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-500"
+                      >
+                        <option value="">Select target value...</option>
+                        {generateRangeOptions(currentValue, meta).map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-emerald-700">
+                        Target {meta.unit}
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={meta.min}
+                          max={meta.max}
+                          step={meta.step}
+                          value={targetValues[action]}
+                          onChange={(e) =>
+                            setTargetValues((prev) => ({
+                              ...prev,
+                              [action]: e.target.value,
+                            }))
+                          }
+                          placeholder={`Target ${meta.unit}`}
+                          disabled={isPending || isLoading || isOnCooldown}
+                          className="flex-1 rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-500"
+                        />
+                        <span className="text-xs text-emerald-600">{meta.unit}</span>
+                      </div>
+                    </div>
+                  )}
                   {error && (
                     <p className="text-xs text-rose-600">{error}</p>
                   )}

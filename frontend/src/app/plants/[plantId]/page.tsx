@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { format, formatDistanceToNow } from "date-fns";
 import ControlPanel from "@/components/ControlPanel";
 import TimeseriesChart from "@/components/TimeseriesChart";
+import DiseaseRiskChart from "@/components/DiseaseRiskChart";
 import usePlantDetail from "@/hooks/usePlantDetail";
 import {
   PLANT_PROFILES,
@@ -41,6 +42,7 @@ export default function PlantDetailPage() {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [lockError, setLockError] = useState<string | null>(null);
   const [lockSuccess, setLockSuccess] = useState<boolean>(false);
+  const [recentReadingsTab, setRecentReadingsTab] = useState<"disease" | "metrics">("metrics");
 
   const selectedProfile: PlantProfile = useMemo(
     () =>
@@ -49,11 +51,29 @@ export default function PlantDetailPage() {
     [selectedProfileId]
   );
 
+  // Filter series into metrics (telemetry) and disease points
+  const metricsSeries = useMemo(() => {
+    return series.filter(
+      (point) =>
+        (point.temperatureC !== null && point.temperatureC !== undefined) ||
+        (point.humidity !== null && point.humidity !== undefined) ||
+        (point.soilMoisture !== null && point.soilMoisture !== undefined) ||
+        (point.lightLux !== null && point.lightLux !== undefined)
+    );
+  }, [series]);
+
+  const diseaseSeries = useMemo(() => {
+    return series.filter(
+      (point) =>
+        point.score !== null && point.score !== undefined
+    );
+  }, [series]);
+
   const recentAverages = useMemo(() => {
-    if (!series.length) {
+    if (!metricsSeries.length) {
       return {};
     }
-    const lookback = series.slice(-8);
+    const lookback = metricsSeries.slice(-8);
     const averageFor = (key: keyof typeof lookback[number]) => {
       const values = lookback
         .map((point) => point[key])
@@ -75,7 +95,7 @@ export default function PlantDetailPage() {
       soilMoisture: averageFor("soilMoisture"),
       lightLux: averageFor("lightLux")
     } as Record<string, number | undefined>;
-  }, [series]);
+  }, [metricsSeries]);
 
   const summary = useMemo(() => {
     if (!snapshot) {
@@ -239,7 +259,7 @@ export default function PlantDetailPage() {
             Latest reading: <strong>{summary.lastSeen}</strong>
           </p>
         </div>
-        <div className="grid gap-3 text-sm text-emerald-700 min-[460px]:grid-cols-2">
+        {/* <div className="grid gap-3 text-sm text-emerald-700 min-[460px]:grid-cols-2"> */}
           <div className="flex flex-col gap-1.5 rounded-3xl border border-emerald-200 bg-white px-4 py-3">
             <p className="text-[0.65rem] uppercase tracking-[0.28em] text-emerald-500 sm:text-xs">
               Disease risk
@@ -250,7 +270,7 @@ export default function PlantDetailPage() {
                 : "—"}
             </p>
           </div>
-          <div className="flex flex-col gap-1.5 rounded-3xl border border-emerald-200 bg-white px-4 py-3">
+          {/* <div className="flex flex-col gap-1.5 rounded-3xl border border-emerald-200 bg-white px-4 py-3">
             <p className="text-[0.65rem] uppercase tracking-[0.28em] text-emerald-500 sm:text-xs">
               Soil moisture
             </p>
@@ -260,8 +280,8 @@ export default function PlantDetailPage() {
                 ? `${Math.round(snapshot.soilMoisture * 100)}%`
                 : "—"}
             </p>
-          </div>
-        </div>
+          </div> */}
+        {/* </div> */}
       </header>
 
       <section
@@ -446,57 +466,129 @@ export default function PlantDetailPage() {
           </div>
 
           <div className="space-y-6" data-aos="fade-up">
-            <TimeseriesChart points={series} />
+            <div className="grid gap-6 sm:grid-cols-2">
+              <TimeseriesChart points={metricsSeries} />
+              <DiseaseRiskChart points={diseaseSeries} />
+            </div>
 
             <section className="card-surface">
-              <h3 className="mb-4 flex items-center gap-2 text-base font-semibold text-emerald-900 sm:text-lg">
-                <span aria-hidden>📋</span>
-                Recent readings
-              </h3>
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-base font-semibold text-emerald-900 sm:text-lg">
+                  <span aria-hidden>📋</span>
+                  Recent readings
+                </h3>
+                <div className="flex gap-2 rounded-full border border-emerald-200 bg-emerald-50 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setRecentReadingsTab("metrics")}
+                    className={`rounded-full px-4 py-1.5 text-xs font-medium transition sm:text-sm ${
+                      recentReadingsTab === "metrics"
+                        ? "bg-emerald-500 text-white shadow-sm"
+                        : "text-emerald-700 hover:bg-emerald-100"
+                    }`}
+                  >
+                    Metrics
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRecentReadingsTab("disease")}
+                    className={`rounded-full px-4 py-1.5 text-xs font-medium transition sm:text-sm ${
+                      recentReadingsTab === "disease"
+                        ? "bg-emerald-500 text-white shadow-sm"
+                        : "text-emerald-700 hover:bg-emerald-100"
+                    }`}
+                  >
+                    Disease
+                  </button>
+                </div>
+              </div>
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-emerald-100 text-xs text-emerald-800 sm:text-sm">
-                  <thead className="text-left text-[0.65rem] uppercase tracking-wide text-emerald-500 sm:text-xs">
-                    <tr>
-                      <th className="px-2 py-2 sm:px-3">Time</th>
-                      <th className="px-2 py-2 sm:px-3">Temp °C</th>
-                      <th className="px-2 py-2 sm:px-3">Humidity %</th>
-                      <th className="px-2 py-2 sm:px-3">Soil</th>
-                      <th className="px-2 py-2 sm:px-3">Light lux</th>
-                      <th className="px-2 py-2 sm:px-3">Disease</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-emerald-50">
-                    {series
-                      .slice()
-                      .reverse()
-                      .slice(0, 12)
-                      .map((point) => (
-                        <tr key={point.timestamp}>
-                          <td className="whitespace-nowrap px-2 py-2 sm:px-3">
-                            {format(point.timestamp * 1000, "PPpp")}
-                          </td>
-                          <td className="px-2 py-2 sm:px-3">
-                            {formatMetric(point.temperatureC, "°C")}
-                          </td>
-                          <td className="px-2 py-2 sm:px-3">
-                            {formatMetric(point.humidity, "%", 0)}
-                          </td>
-                          <td className="px-2 py-2 sm:px-3">
-                            {point.soilMoisture !== undefined &&
-                            point.soilMoisture !== null
-                              ? `${Math.round(point.soilMoisture * 100)}%`
-                              : "—"}
-                          </td>
-                          <td className="px-2 py-2 sm:px-3">
-                            {formatMetric(point.lightLux, " lx")}
-                          </td>
-                          <td className="px-2 py-2 sm:px-3">
-                            {(point.disease ?? false) ? "⚠︎" : "✓"}
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
+                {recentReadingsTab === "metrics" ? (
+                  <table className="min-w-full divide-y divide-emerald-100 text-xs text-emerald-800 sm:text-sm">
+                    <thead className="text-left text-[0.65rem] uppercase tracking-wide text-emerald-500 sm:text-xs">
+                      <tr>
+                        <th className="px-2 py-2 sm:px-3">Time</th>
+                        <th className="px-2 py-2 sm:px-3">Temp °C</th>
+                        <th className="px-2 py-2 sm:px-3">Humidity %</th>
+                        <th className="px-2 py-2 sm:px-3">Soil</th>
+                        <th className="px-2 py-2 sm:px-3">Light lux</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-emerald-50">
+                      {metricsSeries
+                        .slice()
+                        .reverse()
+                        .slice(0, 12)
+                        .map((point) => (
+                          <tr key={point.timestamp}>
+                            <td className="whitespace-nowrap px-2 py-2 sm:px-3">
+                              {format(point.timestamp * 1000, "PPpp")}
+                            </td>
+                            <td className="px-2 py-2 sm:px-3">
+                              {formatMetric(point.temperatureC, "°C")}
+                            </td>
+                            <td className="px-2 py-2 sm:px-3">
+                              {formatMetric(point.humidity, "%", 0)}
+                            </td>
+                            <td className="px-2 py-2 sm:px-3">
+                              {point.soilMoisture !== undefined &&
+                              point.soilMoisture !== null
+                                ? `${Math.round(point.soilMoisture * 100)}%`
+                                : "—"}
+                            </td>
+                            <td className="px-2 py-2 sm:px-3">
+                              {formatMetric(point.lightLux, " lx")}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table className="min-w-full divide-y divide-emerald-100 text-xs text-emerald-800 sm:text-sm">
+                    <thead className="text-left text-[0.65rem] uppercase tracking-wide text-emerald-500 sm:text-xs">
+                      <tr>
+                        <th className="px-2 py-2 sm:px-3">Time</th>
+                        <th className="px-2 py-2 sm:px-3">Disease Risk</th>
+                        <th className="px-2 py-2 sm:px-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-emerald-50">
+                      {diseaseSeries
+                        .slice()
+                        .reverse()
+                        .slice(0, 12)
+                        .map((point) => (
+                          <tr key={point.timestamp}>
+                            <td className="whitespace-nowrap px-2 py-2 sm:px-3">
+                              {format(point.timestamp * 1000, "PPpp")}
+                            </td>
+                            <td className="px-2 py-2 sm:px-3">
+                              {point.score !== undefined && point.score !== null
+                                ? `${Math.round(point.score * 100)}%`
+                                : "—"}
+                            </td>
+                            <td className="px-2 py-2 sm:px-3">
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[0.65rem] font-semibold ${
+                                  point.disease === true
+                                    ? "bg-rose-100 text-rose-700"
+                                    : point.disease === false
+                                      ? "bg-emerald-100 text-emerald-700"
+                                      : "bg-slate-100 text-slate-500"
+                                }`}
+                              >
+                                {point.disease === true
+                                  ? "⚠︎ Needs attention"
+                                  : point.disease === false
+                                    ? "✓ Healthy"
+                                    : "— Unknown"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </section>
           </div>
