@@ -112,8 +112,10 @@ def _build_reading_item(device_id: str, timestamp: str, message: Dict[str, Any])
 
 def _extract_metrics(message: Dict[str, Any]) -> Dict[str, Any]:
     metrics: Dict[str, Any] = {}
+    # Exclude non-metric fields
+    excluded_keys = {"deviceId", "threshold", "plantType", "timestamp", "eventTime", "reportedAt"}
     for key, value in message.items():
-        if key in {"deviceId", "threshold", "plantType"}:
+        if key in excluded_keys:
             continue
         metrics[key] = _convert_value(value)
     return metrics
@@ -145,10 +147,22 @@ def _to_decimal(value: Any) -> Any:
         return value
     if isinstance(value, (int, float)):
         return Decimal(str(value))
-    try:
-        return Decimal(value)
-    except Exception:  # pylint: disable=broad-exception-caught
-        return value
+    if isinstance(value, str):
+        # Try to convert string numbers to Decimal
+        try:
+            # Remove whitespace and try to parse as number
+            cleaned = value.strip()
+            if cleaned:
+                # Check if it looks like a number (not an ISO date or other string)
+                # Try to convert, but catch exceptions for non-numeric strings
+                decimal_value = Decimal(cleaned)
+                # If successful, return it
+                return decimal_value
+        except (ValueError, TypeError, Exception):  # pylint: disable=broad-exception-caught
+            # If conversion fails, it's not a number - return as string
+            pass
+    # For non-numeric values (dicts, lists, strings that aren't numbers), return as-is
+    return value
 
 
 def _now() -> datetime:

@@ -28,7 +28,7 @@ app = FastAPI(title="CloudIoT FastAPI", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("ALLOWED_ORIGINS", "*").split(","),
+    allow_origins=[origin.strip() for origin in os.environ.get("ALLOWED_ORIGINS", "*").split(",")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -231,6 +231,28 @@ def _normalise_item(item: Dict[str, Any]) -> Dict[str, Any]:
         data["deviceId"] = plant_id
     if "timestamp" in data:
         data["timestamp"] = _to_epoch_seconds(data["timestamp"])
+    
+    # Extract metrics from the metrics map if it exists
+    metrics = data.get("metrics", {})
+    if isinstance(metrics, dict):
+        # Flatten metrics to top level for API compatibility
+        for key, value in metrics.items():
+            if key not in data:  # Don't overwrite existing top-level fields
+                data[key] = value
+        # Handle diseaseRisk from disease records - map to score
+        if "diseaseRisk" in metrics and "score" not in data:
+            disease_risk = metrics.get("diseaseRisk")
+            if disease_risk is not None:
+                data["score"] = float(disease_risk)
+    
+    # Handle score - could be in metrics (as diseaseRisk) or at top level
+    if "score" not in data or data.get("score") is None:
+        # Try to get from metrics.diseaseRisk if it exists
+        if isinstance(metrics, dict) and "diseaseRisk" in metrics:
+            disease_risk = metrics.get("diseaseRisk")
+            if disease_risk is not None:
+                data["score"] = float(disease_risk)
+    
     score = float(data["score"]) if "score" in data and data["score"] is not None else None
     data["score"] = score
     data["disease"] = _derive_disease_flag(score, data.get("disease"))
@@ -345,22 +367,60 @@ def list_telemetry(device_id: str, limit: int = 25) -> List[TelemetryRecord]:
 def list_plants() -> List[PlantSnapshot]:
     response = telemetry_table.scan()
     items = response.get("Items", [])
-    latest = _latest_by_plant(items).values()
-    snapshots = sorted(latest, key=lambda item: item.get("plantId", ""))
-    return [
-        PlantSnapshot(
-            plantId=item["plantId"],
-            lastSeen=item.get("timestamp", 0),
-            disease=item.get("disease"),
-            score=item.get("score"),
-            temperatureC=item.get("temperatureC"),
-            humidity=item.get("humidity"),
-            soilMoisture=item.get("soilMoisture"),
-            lightLux=item.get("lightLux"),
-            notes=item.get("notes"),
+    
+    # Separate telemetry and disease records
+    telemetry_by_plant: Dict[str, Dict[str, Any]] = {}
+    disease_by_plant: Dict[str, Dict[str, Any]] = {}
+    
+    for raw in items:
+        normalised = _normalise_item(raw)
+        plant_id = normalised["plantId"]
+        reading_type = raw.get("readingType", "")
+        
+        if reading_type == "telemetry":
+            existing = telemetry_by_plant.get(plant_id)
+            if not existing or normalised.get("timestamp", 0) > existing.get("timestamp", 0):
+                telemetry_by_plant[plant_id] = normalised
+        elif reading_type == "disease":
+            existing = disease_by_plant.get(plant_id)
+            if not existing or normalised.get("timestamp", 0) > existing.get("timestamp", 0):
+                disease_by_plant[plant_id] = normalised
+    
+    # Merge telemetry and disease data for each plant
+    all_plant_ids = set(telemetry_by_plant.keys()) | set(disease_by_plant.keys())
+    snapshots = []
+    
+    for plant_id in sorted(all_plant_ids):
+        telemetry = telemetry_by_plant.get(plant_id, {})
+        disease = disease_by_plant.get(plant_id, {})
+        
+        # Use telemetry data as base, merge disease score if available
+        merged = telemetry.copy()
+        if disease.get("score") is not None:
+            merged["score"] = disease.get("score")
+        if disease.get("disease") is not None:
+            merged["disease"] = disease.get("disease")
+        # Use the most recent timestamp
+        merged["timestamp"] = max(
+            telemetry.get("timestamp", 0),
+            disease.get("timestamp", 0)
         )
-        for item in snapshots
-    ]
+        
+        snapshots.append(
+            PlantSnapshot(
+                plantId=merged["plantId"],
+                lastSeen=merged.get("timestamp", 0),
+                disease=merged.get("disease"),
+                score=merged.get("score"),
+                temperatureC=merged.get("temperatureC"),
+                humidity=merged.get("humidity"),
+                soilMoisture=merged.get("soilMoisture"),
+                lightLux=merged.get("lightLux"),
+                notes=merged.get("notes"),
+            )
+        )
+    
+    return snapshots
 
 
 @app.get("/plants/{plant_id}", response_model=PlantSnapshot)

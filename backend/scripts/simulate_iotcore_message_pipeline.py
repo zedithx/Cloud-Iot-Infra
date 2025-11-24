@@ -131,7 +131,26 @@ def _simulate() -> None:
     print("Metrics evaluator response:", metrics_response)
     print("\nStored DynamoDB items:")
     for item in stored_items:
-        print(json.dumps(item, default=str, indent=2))
+        # Convert Decimal to float for better JSON display
+        def decimal_to_float(obj):
+            from decimal import Decimal
+            if isinstance(obj, Decimal):
+                return float(obj)
+            if isinstance(obj, dict):
+                return {k: decimal_to_float(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [decimal_to_float(v) for v in obj]
+            return obj
+        
+        item_display = decimal_to_float(item)
+        print(json.dumps(item_display, default=str, indent=2))
+        
+        # Also show metrics field specifically
+        if "metrics" in item:
+            print(f"  → Metrics field type: {type(item['metrics'])}")
+            if isinstance(item["metrics"], dict):
+                for key, value in item["metrics"].items():
+                    print(f"    - {key}: {value} (type: {type(value).__name__})")
 
     if alerts_sent:
         print("\nSNS alerts payloads:")

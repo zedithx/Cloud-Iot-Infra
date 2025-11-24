@@ -2,9 +2,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aws_cdk import (
+    CfnOutput,
     Duration,
-    aws_apigatewayv2 as apigwv2,
-    aws_apigatewayv2_integrations as apigw_integrations,
     aws_ecr_assets as ecr_assets,
     aws_ec2 as ec2,
     aws_ecs as ecs,
@@ -24,14 +23,13 @@ class ApiServiceResources:
     cluster: ecs.Cluster
     service: ecs.FargateService
     load_balancer: elbv2.ApplicationLoadBalancer
-    http_api: apigwv2.HttpApi
     task_definition: ecs.FargateTaskDefinition
     container: ecs.ContainerDefinition
     target_group: elbv2.ApplicationTargetGroup
 
 
 class ApiServiceConstruct(Construct):
-    """ECS Fargate FastAPI service exposed via ALB and API Gateway HTTP API."""
+    """ECS Fargate FastAPI service exposed via internet-facing ALB."""
 
     def __init__(
         self,
@@ -97,6 +95,7 @@ class ApiServiceConstruct(Construct):
                 "APP_STAGE": app_context.stage,
                 "TELEMETRY_TABLE": data_plane.telemetry_table.table_name,
                 "ALLOWED_ORIGINS": app_context.config.allowed_origins,
+                "AWS_REGION": app_context.env.region or "us-east-1",
             },
         )
         container.add_port_mappings(
@@ -149,46 +148,31 @@ class ApiServiceConstruct(Construct):
             health_check=elbv2.HealthCheck(
                 path="/health",
                 interval=Duration.seconds(30),
+                timeout=Duration.seconds(5),
+                healthy_threshold_count=2,
+                unhealthy_threshold_count=3,
             ),
         )
 
-        http_api = apigwv2.HttpApi(
+        # Output the ALB DNS name for easy access
+        CfnOutput(
             self,
-            "CommandHttpApi",
-            api_name=f"{app_context.stage}-command-api",
-            create_default_stage=True,
+            "ApiLoadBalancerUrl",
+            value=f"http://{load_balancer.load_balancer_dns_name}",
+            description="URL to access the FastAPI service via Application Load Balancer",
         )
 
-        vpc_link = apigwv2.VpcLink(
+        CfnOutput(
             self,
-            "AlbVpcLink",
-            vpc=networking.vpc,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
-        )
-
-        alb_integration = apigw_integrations.HttpAlbIntegration(
-            "AlbIntegration",
-            listener=listener,
-            vpc_link=vpc_link,
-        )
-
-        http_api.add_routes(
-            path="/{proxy+}",
-            methods=[
-                apigwv2.HttpMethod.GET,
-                apigwv2.HttpMethod.POST,
-                apigwv2.HttpMethod.PUT,
-                apigwv2.HttpMethod.DELETE,
-                apigwv2.HttpMethod.PATCH,
-            ],
-            integration=alb_integration,
+            "ApiLoadBalancerDnsName",
+            value=load_balancer.load_balancer_dns_name,
+            description="DNS name of the Application Load Balancer",
         )
 
         return ApiServiceResources(
             cluster=cluster,
             service=service,
             load_balancer=load_balancer,
-            http_api=http_api,
             task_definition=task_definition,
             container=container,
             target_group=target_group,

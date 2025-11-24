@@ -36,10 +36,73 @@ export const apiClient = axios.create({
   }
 });
 
+// Request interceptor to log all API calls
+apiClient.interceptors.request.use(
+  (config) => {
+    const method = config.method?.toUpperCase() || "GET";
+    const url = config.url || "";
+    const fullUrl = config.baseURL ? `${config.baseURL}${url}` : url;
+    
+    console.info(`[API Request] ${method} ${fullUrl}`, {
+      method,
+      url: fullUrl,
+      params: config.params,
+      data: config.data,
+      headers: config.headers
+    });
+    
+    // Add timestamp for response timing
+    (config as any).metadata = { startTime: Date.now() };
+    
+    return config;
+  },
+  (error) => {
+    console.error("[API Request Error]", error);
+    return Promise.reject(error);
+  }
+);
+
+// Response interceptor to log all API responses
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const config = response.config;
+    const method = config.method?.toUpperCase() || "GET";
+    const url = config.url || "";
+    const fullUrl = config.baseURL ? `${config.baseURL}${url}` : url;
+    const duration = (config as any).metadata?.startTime 
+      ? Date.now() - (config as any).metadata.startTime 
+      : null;
+    
+    console.info(`[API Response] ${method} ${fullUrl}`, {
+      status: response.status,
+      statusText: response.statusText,
+      duration: duration ? `${duration}ms` : "unknown",
+      data: response.data,
+      headers: response.headers
+    });
+    
+    return response;
+  },
   (error) => {
     if (axios.isAxiosError(error)) {
+      const config = error.config;
+      const method = config?.method?.toUpperCase() || "GET";
+      const url = config?.url || "";
+      const fullUrl = config?.baseURL ? `${config.baseURL}${url}` : url;
+      const duration = config ? ((config as any).metadata?.startTime 
+        ? Date.now() - (config as any).metadata.startTime 
+        : null) : null;
+      
+      console.error(`[API Error] ${method} ${fullUrl}`, {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        duration: duration ? `${duration}ms` : "unknown",
+        error: error.message,
+        responseData: error.response?.data,
+        requestData: config?.data,
+        requestParams: config?.params
+      });
+      
       const message =
         error.response?.data?.message ||
         error.message ||
@@ -47,6 +110,7 @@ apiClient.interceptors.response.use(
       return Promise.reject(new Error(message));
     }
 
+    console.error("[API Error - Non-Axios]", error);
     return Promise.reject(error);
   }
 );
@@ -57,6 +121,7 @@ export async function submitTelemetry(
   payload: TelemetryPayload
 ): Promise<TelemetryRecord> {
   if (USE_MOCK_API) {
+    console.info("[API Mock] POST /telemetry", { payload });
     const synthetic: TelemetryRecord = {
       deviceId: payload.deviceId,
       timestamp: Math.floor(Date.now() / 1000),
@@ -71,6 +136,7 @@ export async function submitTelemetry(
           : payload.score >= 0.7,
       notes: payload.notes ?? null
     };
+    console.info("[API Mock Response] POST /telemetry", { data: synthetic });
     return synthetic;
   }
 
@@ -103,12 +169,16 @@ export async function fetchTelemetry(
   deviceId?: string | null
 ): Promise<TelemetryRecord[]> {
   if (USE_MOCK_API) {
-    if (!deviceId) {
-      return MOCK_TELEMETRY;
-    }
-    return MOCK_TELEMETRY.filter(
-      (record) => record.deviceId === deviceId
-    );
+    const endpoint = deviceId ? `/telemetry/${deviceId}` : "/telemetry";
+    console.info(`[API Mock] GET ${endpoint}`, { deviceId });
+    const result = !deviceId
+      ? MOCK_TELEMETRY
+      : MOCK_TELEMETRY.filter((record) => record.deviceId === deviceId);
+    console.info(`[API Mock Response] GET ${endpoint}`, { 
+      count: result.length, 
+      data: result 
+    });
+    return result;
   }
 
   try {
@@ -127,6 +197,11 @@ export async function fetchTelemetry(
 
 export async function fetchPlants(): Promise<PlantSnapshot[]> {
   if (USE_MOCK_API) {
+    console.info("[API Mock] GET /plants");
+    console.info("[API Mock Response] GET /plants", { 
+      count: MOCK_PLANTS.length, 
+      data: MOCK_PLANTS 
+    });
     return MOCK_PLANTS;
   }
   try {
@@ -142,10 +217,13 @@ export async function fetchPlantDetail(
   plantId: string
 ): Promise<PlantSnapshot> {
   if (USE_MOCK_API) {
+    console.info(`[API Mock] GET /plants/${plantId}`, { plantId });
     const plant = MOCK_PLANTS.find((item) => item.plantId === plantId);
     if (!plant) {
+      console.error(`[API Mock Error] GET /plants/${plantId} - Plant not found`);
       throw new Error("Plant not found in mock data");
     }
+    console.info(`[API Mock Response] GET /plants/${plantId}`, { data: plant });
     return plant;
   }
   try {
@@ -165,12 +243,16 @@ export async function fetchPlantSeries(
   options?: { limit?: number; start?: number; end?: number }
 ): Promise<PlantTimeSeries> {
   if (USE_MOCK_API) {
-    return (
-      MOCK_SERIES[plantId] ?? {
-        plantId,
-        points: []
-      }
-    );
+    console.info(`[API Mock] GET /plants/${plantId}/timeseries`, { plantId, options });
+    const result = MOCK_SERIES[plantId] ?? {
+      plantId,
+      points: []
+    };
+    console.info(`[API Mock Response] GET /plants/${plantId}/timeseries`, { 
+      pointsCount: result.points.length, 
+      data: result 
+    });
+    return result;
   }
   try {
     const response = await apiClient.get<PlantTimeSeries>(
@@ -206,13 +288,15 @@ export async function sendActuatorCommand(
   command: ActuatorCommand
 ): Promise<{ deviceId: string; command: ActuatorCommand; topic: string; status: string }> {
   if (USE_MOCK_API) {
-    // Mock response
-    return {
+    console.info(`[API Mock] POST /devices/${deviceId}/actuators`, { deviceId, command });
+    const result = {
       deviceId,
       command,
       topic: `leaf/commands/${deviceId}`,
       status: "sent"
     };
+    console.info(`[API Mock Response] POST /devices/${deviceId}/actuators`, { data: result });
+    return result;
   }
 
   try {
@@ -241,13 +325,15 @@ export async function getPlantTypeMetrics(
   plantType: string
 ): Promise<PlantMetrics> {
   if (USE_MOCK_API) {
+    console.info(`[API Mock] GET /plant-types/${plantType}`, { plantType });
     // Mock response - use frontend plant profiles
     const profiles = await import("@/lib/plantProfiles");
     const profile = profiles.PLANT_PROFILES.find((p) => p.id === plantType);
     if (!profile) {
+      console.error(`[API Mock Error] GET /plant-types/${plantType} - Plant type not found`);
       throw new Error(`Plant type '${plantType}' not found`);
     }
-    return {
+    const result = {
       plantType: profile.id,
       temperatureC: {
         min: profile.metrics.temperatureC.min,
@@ -266,6 +352,8 @@ export async function getPlantTypeMetrics(
         max: profile.metrics.lightLux.max,
       },
     };
+    console.info(`[API Mock Response] GET /plant-types/${plantType}`, { data: result });
+    return result;
   }
 
   try {
@@ -284,12 +372,14 @@ export async function setDevicePlantType(
   plantType: string
 ): Promise<{ deviceId: string; plantType: string; status: string }> {
   if (USE_MOCK_API) {
-    // Mock response
-    return {
+    console.info(`[API Mock] POST /devices/${deviceId}/plant-type`, { deviceId, plantType });
+    const result = {
       deviceId,
       plantType,
       status: "set",
     };
+    console.info(`[API Mock Response] POST /devices/${deviceId}/plant-type`, { data: result });
+    return result;
   }
 
   try {

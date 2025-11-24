@@ -53,7 +53,6 @@ class SchedulingConstruct(Construct):
             log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "DYNAMO_TABLE_NAME": data_plane.telemetry_table.table_name,
-                "AWS_REGION": app_context.env.region or "us-east-1",
                 "RAW_BUCKET_NAME": data_plane.raw_images_bucket.bucket_name,
                 "PHOTO_PREFIX": "photos",
                 "PRESIGNED_URL_EXPIRY": "3600",  # 1 hour

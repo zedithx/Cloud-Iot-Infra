@@ -34,9 +34,10 @@ DEFAULT_ENV = ApplicationEnvironmentConfig(
     sagemaker_model_data_url="s3://placeholder-model-artifacts/model.tar.gz",
     sagemaker_model_image_uri="683313688378.dkr.ecr.{region}.amazonaws.com/kmeans:1",
     alert_threshold=0.8,
-    allowed_origins="*",
+    allowed_origins="http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,https://cloud-iot-infra.vercel.app",
     enable_ml_inference=False,
     ses_from_email="tangledsocialapp@gmail.com",
+    region="ap-southeast-1",
     ses_to_email="aersijun@gmail.com",
 )
 
