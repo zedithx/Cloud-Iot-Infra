@@ -207,8 +207,8 @@ export default function ControlPanel({
                 const loadingKey = getStorageKey(plantId, action, "loading");
                 localStorage.removeItem(loadingKey);
                 return {
-                  ...prevTime,
-                  [action]: null,
+                ...prevTime,
+                [action]: null,
                 };
               });
             }
@@ -510,25 +510,25 @@ export default function ControlPanel({
                       <label className="text-xs font-medium text-emerald-700">
                         Target {meta.unit}
                       </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          min={meta.min}
-                          max={meta.max}
-                          step={meta.step}
-                          value={targetValues[action]}
-                          onChange={(e) =>
-                            setTargetValues((prev) => ({
-                              ...prev,
-                              [action]: e.target.value,
-                            }))
-                          }
-                          placeholder={`Target ${meta.unit}`}
-                          disabled={isPending || isLoading || isOnCooldown}
-                          className="flex-1 rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-500"
-                        />
-                        <span className="text-xs text-emerald-600">{meta.unit}</span>
-                      </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={meta.min}
+                      max={meta.max}
+                      step={meta.step}
+                      value={targetValues[action]}
+                      onChange={(e) =>
+                        setTargetValues((prev) => ({
+                          ...prev,
+                          [action]: e.target.value,
+                        }))
+                      }
+                      placeholder={`Target ${meta.unit}`}
+                      disabled={isPending || isLoading || isOnCooldown}
+                      className="flex-1 rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-500"
+                    />
+                    <span className="text-xs text-emerald-600">{meta.unit}</span>
+                  </div>
                     </div>
                   )}
                   {error && (

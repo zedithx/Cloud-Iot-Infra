@@ -73,6 +73,17 @@ class NetworkingConstruct(Construct):
             connection=ec2.Port.tcp(80),
             description="Allow HTTP inbound (IPv6)",
         )
+        # HTTPS (port 443) - will be used when certificate is configured
+        alb_sg.add_ingress_rule(
+            peer=ec2.Peer.any_ipv4(),
+            connection=ec2.Port.tcp(443),
+            description="Allow HTTPS inbound",
+        )
+        alb_sg.add_ingress_rule(
+            peer=ec2.Peer.any_ipv6(),
+            connection=ec2.Port.tcp(443),
+            description="Allow HTTPS inbound (IPv6)",
+        )
 
         ecs_sg = ec2.SecurityGroup(
             self,

@@ -162,7 +162,7 @@ def _to_decimal(value: Any) -> Any:
             # If conversion fails, it's not a number - return as string
             pass
     # For non-numeric values (dicts, lists, strings that aren't numbers), return as-is
-    return value
+        return value
 
 
 def _now() -> datetime:

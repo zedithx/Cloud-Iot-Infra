@@ -407,7 +407,7 @@ def list_plants() -> List[PlantSnapshot]:
         )
         
         snapshots.append(
-            PlantSnapshot(
+        PlantSnapshot(
                 plantId=merged["plantId"],
                 lastSeen=merged.get("timestamp", 0),
                 disease=merged.get("disease"),
@@ -417,7 +417,7 @@ def list_plants() -> List[PlantSnapshot]:
                 soilMoisture=merged.get("soilMoisture"),
                 lightLux=merged.get("lightLux"),
                 notes=merged.get("notes"),
-            )
+        )
         )
     
     return snapshots

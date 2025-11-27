@@ -245,8 +245,8 @@ export async function fetchPlantSeries(
   if (USE_MOCK_API) {
     console.info(`[API Mock] GET /plants/${plantId}/timeseries`, { plantId, options });
     const result = MOCK_SERIES[plantId] ?? {
-      plantId,
-      points: []
+        plantId,
+        points: []
     };
     console.info(`[API Mock Response] GET /plants/${plantId}/timeseries`, { 
       pointsCount: result.points.length, 

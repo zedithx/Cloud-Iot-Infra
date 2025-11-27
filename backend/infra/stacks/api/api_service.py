@@ -4,6 +4,7 @@ from pathlib import Path
 from aws_cdk import (
     CfnOutput,
     Duration,
+    aws_certificatemanager as acm,
     aws_ecr_assets as ecr_assets,
     aws_ec2 as ec2,
     aws_ecs as ecs,
@@ -136,14 +137,14 @@ class ApiServiceConstruct(Construct):
             security_group=networking.alb_security_group,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
         )
-        listener = load_balancer.add_listener(
-            "HttpListener",
-            port=80,
-            open=True,
-        )
-        target_group = listener.add_targets(
+
+        # Create target group for the ECS service
+        # Protocol defaults to HTTP for ApplicationTargetGroup, so we can omit it
+        target_group = elbv2.ApplicationTargetGroup(
+            self,
             "FargateTarget",
             port=8000,
+            vpc=networking.vpc,
             targets=[service],
             health_check=elbv2.HealthCheck(
                 path="/health",
@@ -154,20 +155,82 @@ class ApiServiceConstruct(Construct):
             ),
         )
 
-        # Output the ALB DNS name for easy access
+        # HTTPS listener (port 443) - only if certificate is provided
+        https_listener = None
+        if app_context.config.alb_certificate_arn:
+            # Import existing certificate
+            certificate = acm.Certificate.from_certificate_arn(
+                self,
+                "AlbCertificate",
+                certificate_arn=app_context.config.alb_certificate_arn,
+            )
+
+            # HTTPS listener (port 443) - uses target group
+            # Create FIRST to ensure it exists before HTTP redirects to it
+            https_listener = load_balancer.add_listener(
+                "HttpsListener",
+                port=443,
+                certificates=[certificate],
+                open=True,
+            )
+            https_listener.add_target_groups(
+                "FargateTarget",
+                target_groups=[target_group],
+            )
+
+            # HTTP listener (port 80) - redirects to HTTPS
+            # Create AFTER HTTPS listener and set default action to redirect
+            http_listener = load_balancer.add_listener(
+                "HttpListener",
+                port=80,
+                open=True,
+                default_action=elbv2.ListenerAction.redirect(
+                    protocol="HTTPS",
+                    port="443",
+                    permanent=True,
+                ),
+            )
+        else:
+            # No HTTPS - HTTP listener forwards to target group
+            http_listener = load_balancer.add_listener(
+                "HttpListener",
+                port=80,
+                open=True,
+            )
+            http_listener.add_target_groups(
+                "FargateTarget",
+                target_groups=[target_group],
+            )
+
+        # Output the ALB DNS name and URLs
+        if app_context.config.domain_name:
+            protocol = "https"
+            base_url = f"https://{app_context.config.domain_name}"
+        else:
+            protocol = "http"
+            base_url = f"http://{load_balancer.load_balancer_dns_name}"
+
         CfnOutput(
             self,
             "ApiLoadBalancerUrl",
-            value=f"http://{load_balancer.load_balancer_dns_name}",
-            description="URL to access the FastAPI service via Application Load Balancer",
+            value=base_url,
+            description="URL to access the FastAPI service (use this in your frontend)",
         )
 
         CfnOutput(
             self,
             "ApiLoadBalancerDnsName",
             value=load_balancer.load_balancer_dns_name,
-            description="DNS name of the Application Load Balancer",
+            description="DNS name of the Application Load Balancer (for Route53 A record)",
         )
+
+        if app_context.config.alb_certificate_arn:
+            CfnOutput(
+                self,
+                "HttpsEnabled",
+                value="true",
+                description="HTTPS is enabled with certificate",
+            )
 
         return ApiServiceResources(
             cluster=cluster,

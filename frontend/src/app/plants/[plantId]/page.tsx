@@ -474,9 +474,9 @@ export default function PlantDetailPage() {
             <section className="card-surface">
               <div className="mb-4 flex items-center justify-between">
                 <h3 className="flex items-center gap-2 text-base font-semibold text-emerald-900 sm:text-lg">
-                  <span aria-hidden>📋</span>
-                  Recent readings
-                </h3>
+                <span aria-hidden>📋</span>
+                Recent readings
+              </h3>
                 <div className="flex gap-2 rounded-full border border-emerald-200 bg-emerald-50 p-1">
                   <button
                     type="button"
@@ -504,41 +504,41 @@ export default function PlantDetailPage() {
               </div>
               <div className="overflow-x-auto">
                 {recentReadingsTab === "metrics" ? (
-                  <table className="min-w-full divide-y divide-emerald-100 text-xs text-emerald-800 sm:text-sm">
-                    <thead className="text-left text-[0.65rem] uppercase tracking-wide text-emerald-500 sm:text-xs">
-                      <tr>
-                        <th className="px-2 py-2 sm:px-3">Time</th>
-                        <th className="px-2 py-2 sm:px-3">Temp °C</th>
-                        <th className="px-2 py-2 sm:px-3">Humidity %</th>
-                        <th className="px-2 py-2 sm:px-3">Soil</th>
-                        <th className="px-2 py-2 sm:px-3">Light lux</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-emerald-50">
+                <table className="min-w-full divide-y divide-emerald-100 text-xs text-emerald-800 sm:text-sm">
+                  <thead className="text-left text-[0.65rem] uppercase tracking-wide text-emerald-500 sm:text-xs">
+                    <tr>
+                      <th className="px-2 py-2 sm:px-3">Time</th>
+                      <th className="px-2 py-2 sm:px-3">Temp °C</th>
+                      <th className="px-2 py-2 sm:px-3">Humidity %</th>
+                      <th className="px-2 py-2 sm:px-3">Soil</th>
+                      <th className="px-2 py-2 sm:px-3">Light lux</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-emerald-50">
                       {metricsSeries
-                        .slice()
-                        .reverse()
-                        .slice(0, 12)
-                        .map((point) => (
-                          <tr key={point.timestamp}>
-                            <td className="whitespace-nowrap px-2 py-2 sm:px-3">
-                              {format(point.timestamp * 1000, "PPpp")}
-                            </td>
-                            <td className="px-2 py-2 sm:px-3">
-                              {formatMetric(point.temperatureC, "°C")}
-                            </td>
-                            <td className="px-2 py-2 sm:px-3">
-                              {formatMetric(point.humidity, "%", 0)}
-                            </td>
-                            <td className="px-2 py-2 sm:px-3">
-                              {point.soilMoisture !== undefined &&
-                              point.soilMoisture !== null
-                                ? `${Math.round(point.soilMoisture * 100)}%`
-                                : "—"}
-                            </td>
-                            <td className="px-2 py-2 sm:px-3">
-                              {formatMetric(point.lightLux, " lx")}
-                            </td>
+                      .slice()
+                      .reverse()
+                      .slice(0, 12)
+                      .map((point) => (
+                        <tr key={point.timestamp}>
+                          <td className="whitespace-nowrap px-2 py-2 sm:px-3">
+                            {format(point.timestamp * 1000, "PPpp")}
+                          </td>
+                          <td className="px-2 py-2 sm:px-3">
+                            {formatMetric(point.temperatureC, "°C")}
+                          </td>
+                          <td className="px-2 py-2 sm:px-3">
+                            {formatMetric(point.humidity, "%", 0)}
+                          </td>
+                          <td className="px-2 py-2 sm:px-3">
+                            {point.soilMoisture !== undefined &&
+                            point.soilMoisture !== null
+                              ? `${Math.round(point.soilMoisture * 100)}%`
+                              : "—"}
+                          </td>
+                          <td className="px-2 py-2 sm:px-3">
+                            {formatMetric(point.lightLux, " lx")}
+                          </td>
                           </tr>
                         ))}
                     </tbody>
@@ -567,7 +567,7 @@ export default function PlantDetailPage() {
                                 ? `${Math.round(point.score * 100)}%`
                                 : "—"}
                             </td>
-                            <td className="px-2 py-2 sm:px-3">
+                          <td className="px-2 py-2 sm:px-3">
                               <span
                                 className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[0.65rem] font-semibold ${
                                   point.disease === true
@@ -583,11 +583,11 @@ export default function PlantDetailPage() {
                                     ? "✓ Healthy"
                                     : "— Unknown"}
                               </span>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
                 )}
               </div>
             </section>

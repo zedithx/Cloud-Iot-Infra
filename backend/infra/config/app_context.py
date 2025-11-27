@@ -24,6 +24,8 @@ class ApplicationEnvironmentConfig:
     account: Optional[str] = None
     region: Optional[str] = None
     fastapi_image_uri: Optional[str] = None
+    alb_certificate_arn: Optional[str] = None
+    domain_name: Optional[str] = None  # e.g., "api.example.com"
 
 
 DEFAULT_ENV = ApplicationEnvironmentConfig(
@@ -39,6 +41,8 @@ DEFAULT_ENV = ApplicationEnvironmentConfig(
     ses_from_email="tangledsocialapp@gmail.com",
     region="ap-southeast-1",
     ses_to_email="aersijun@gmail.com",
+    alb_certificate_arn="arn:aws:acm:ap-southeast-1:401725075255:certificate/3ee6ad19-1f7f-4459-9f5c-2a0fc0e087e3",
+    domain_name="plantpulse.tangledsocial.com",
 )
 
 
