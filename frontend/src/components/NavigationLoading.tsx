@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import LoadingScreen from "./LoadingScreen";
 
 const MIN_DISPLAY_TIME = 1500; // 1.5 seconds minimum display time
 
-export default function NavigationLoading() {
+function NavigationLoadingContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
@@ -59,5 +59,13 @@ export default function NavigationLoading() {
   if (!isLoading) return null;
 
   return <LoadingScreen />;
+}
+
+export default function NavigationLoading() {
+  return (
+    <Suspense fallback={null}>
+      <NavigationLoadingContent />
+    </Suspense>
+  );
 }
 
