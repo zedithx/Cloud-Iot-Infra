@@ -1,10 +1,98 @@
 "use client";
 
+import { useState, useCallback, useEffect } from "react";
 import usePlantSnapshots from "@/hooks/usePlantSnapshots";
 import PlantCard from "@/components/PlantCard";
+import QRScanner from "@/components/QRScanner";
+import PlantInfoModal from "@/components/PlantInfoModal";
+import { addScannedPlant, removeScannedPlant } from "@/lib/localStorage";
 
 export default function HomePage() {
   const { plants, isLoading, error, refresh, isMocked } = usePlantSnapshots();
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
+  const [scannedDeviceId, setScannedDeviceId] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  // Debug state changes
+  useEffect(() => {
+    console.log("[HomePage] State changed:", {
+      isScannerOpen,
+      isConfirmationOpen,
+      scannedDeviceId,
+    });
+  }, [isScannerOpen, isConfirmationOpen, scannedDeviceId]);
+
+  const handleScanSuccess = useCallback((deviceId: string) => {
+    console.log("[handleScanSuccess] ===== CALLED =====");
+    console.log("[handleScanSuccess] deviceId:", deviceId);
+    console.log("[handleScanSuccess] Current state before update:", {
+      isScannerOpen,
+      isConfirmationOpen,
+      scannedDeviceId,
+    });
+    
+    if (!deviceId || deviceId.trim().length === 0) {
+      console.error("[handleScanSuccess] Invalid deviceId received:", deviceId);
+      setApiError("Invalid QR code: empty device ID");
+      return;
+    }
+    
+    // Clear any previous errors
+    setApiError(null);
+    
+    // Use functional updates to ensure state is set correctly
+    console.log("[handleScanSuccess] Setting scannedDeviceId...");
+    setScannedDeviceId((prev) => {
+      console.log("[handleScanSuccess] setScannedDeviceId prev:", prev, "new:", deviceId);
+      return deviceId;
+    });
+    
+    console.log("[handleScanSuccess] Closing scanner...");
+    setIsScannerOpen(false);
+    
+    // Use setTimeout to ensure state updates are batched correctly
+    setTimeout(() => {
+      console.log("[handleScanSuccess] Opening confirmation modal...");
+      setIsConfirmationOpen(true);
+      setScannedDeviceId((prev) => {
+        if (prev !== deviceId) {
+          console.log("[handleScanSuccess] scannedDeviceId was lost, restoring:", deviceId);
+          return deviceId;
+        }
+        return prev;
+      });
+      console.log("[handleScanSuccess] Modal should now be open");
+    }, 0);
+  }, [isScannerOpen, isConfirmationOpen, scannedDeviceId]);
+
+  const handleConfirm = (deviceId: string, plantName: string) => {
+    try {
+      addScannedPlant(deviceId, plantName);
+      setIsConfirmationOpen(false);
+      setScannedDeviceId(null);
+      setApiError(null);
+      void refresh(); // Refresh the plant list to show the new plant
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save plant";
+      setApiError(`Error saving plant: ${message}`);
+      console.error("Error saving plant:", err);
+    }
+  };
+
+  const handleCancel = () => {
+    setIsConfirmationOpen(false);
+    setScannedDeviceId(null);
+  };
+
+  const handleCloseScanner = () => {
+    setIsScannerOpen(false);
+  };
+
+  const handleRemovePlant = (deviceId: string) => {
+    removeScannedPlant(deviceId);
+    void refresh(); // Refresh the plant list after removal
+  };
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-10 px-4 pb-16 pt-8 sm:px-6 md:gap-12 md:px-12">
@@ -43,6 +131,13 @@ export default function HomePage() {
               </span>
             )}
             <button
+              onClick={() => setIsScannerOpen(true)}
+              type="button"
+              className="rounded-full border border-emerald-300 bg-emerald-100 px-5 py-2 text-sm font-semibold text-emerald-700 shadow-card transition hover:-translate-y-0.5 hover:bg-emerald-200 sm:w-auto"
+            >
+              📷 Scan QR Code
+            </button>
+            <button
               onClick={refresh}
               type="button"
               className="rounded-full border border-emerald-200 bg-sprout-100 px-5 py-2 text-sm font-semibold text-emerald-700 shadow-card transition hover:-translate-y-0.5 hover:bg-sprout-200 sm:w-auto"
@@ -53,9 +148,17 @@ export default function HomePage() {
         </div>
       </header>
 
-      {error && (
+      {(error || apiError) && (
         <div className="rounded-3xl border border-rose-200 bg-rose-50/80 p-5 text-sm text-rose-600 shadow-card sm:p-6">
-          {error}
+          {error || apiError}
+          {apiError && (
+            <button
+              onClick={() => setApiError(null)}
+              className="ml-2 text-rose-400 hover:text-rose-600 underline"
+            >
+              Dismiss
+            </button>
+          )}
         </div>
       )}
 
@@ -71,7 +174,11 @@ export default function HomePage() {
       ) : plants.length ? (
         <section data-aos="fade-up" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {plants.map((plant) => (
-            <PlantCard key={plant.plantId} plant={plant} />
+            <PlantCard
+              key={plant.plantId}
+              plant={plant}
+              onRemove={handleRemovePlant}
+            />
           ))}
         </section>
       ) : (
@@ -80,11 +187,26 @@ export default function HomePage() {
             No plants yet
           </h2>
           <p className="mt-2 text-sm">
-            Once your devices begin streaming telemetry into DynamoDB you&apos;ll
-            see each plant appear here with the latest vitals.
+            Scan a QR code to add plants to your dashboard. Each plant will
+            appear here with its latest vitals once data is available.
           </p>
         </div>
       )}
+
+      {isScannerOpen && (
+        <QRScanner
+          onScanSuccess={handleScanSuccess}
+          onClose={handleCloseScanner}
+        />
+      )}
+
+      {isConfirmationOpen && scannedDeviceId ? (
+        <PlantInfoModal
+          deviceId={scannedDeviceId}
+          onConfirm={handleConfirm}
+          onCancel={handleCancel}
+        />
+      ) : null}
     </main>
   );
 }

@@ -60,3 +60,33 @@ a {
   @apply absolute rounded-full bg-emerald-200/70 blur-3xl;
 }
 
+/* QR Scanner styles */
+#qr-scanner-container {
+  position: relative;
+  aspect-ratio: 1;
+}
+
+/* Only flip video if it's a front camera (mirrored) */
+#qr-scanner-container[data-front-camera="true"] video {
+  transform: scaleX(-1); /* Flip horizontally to fix mirror effect for front camera */
+}
+
+#qr-scanner-container video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+}
+
+#qr-scanner-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+}
+
+#qr-scanner-container > div {
+  width: 100% !important;
+  height: 100% !important;
+  position: relative;
+}
+
