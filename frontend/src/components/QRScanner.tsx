@@ -16,6 +16,7 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const onScanSuccessRef = useRef(onScanSuccess);
+  const isStoppedRef = useRef(false);
 
   // Update the ref when callback changes
   useEffect(() => {
@@ -83,6 +84,9 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
           containerRef.current.setAttribute("data-front-camera", String(isFrontCamera));
         }
 
+        // Reset stopped flag when starting
+        isStoppedRef.current = false;
+        
         await scanner.start(
           cameraId,
           {
@@ -94,37 +98,34 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
             // Validate that decoded text looks like a device ID
             const deviceId = decodedText.trim();
             if (deviceId.length > 0 && isMounted) {
-              console.log("[QRScanner] ===== QR CODE DECODED =====");
-              console.log("[QRScanner] deviceId:", deviceId);
-              console.log("[QRScanner] isMounted:", isMounted);
               // Call the success callback FIRST, before stopping scanner
               // This ensures the callback executes before component unmounts
-              console.log("[QRScanner] Calling onScanSuccess callback NOW");
               try {
                 onScanSuccessRef.current(deviceId);
-                console.log("[QRScanner] Callback executed successfully");
               } catch (err) {
                 console.error("[QRScanner] Error in callback:", err);
               }
               
-              // Then stop scanning
-              scanner.stop()
-                .then(() => {
-                  console.log("[QRScanner] Scanner stopped successfully");
-                  if (isMounted) {
-                    setIsScanning(false);
-                  }
-                })
-                .catch((err) => {
-                  // Ignore "not running" errors - scanner may have already stopped
-                  const errorMsg = err instanceof Error ? err.message : String(err);
-                  if (!errorMsg.includes("not running") && !errorMsg.includes("not started") && !errorMsg.includes("not paused")) {
-                    console.error("[QRScanner] Error stopping scanner:", err);
-                  }
-                  if (isMounted) {
-                    setIsScanning(false);
-                  }
-                });
+              // Then stop scanning (guard against double-stop)
+              if (!isStoppedRef.current && scannerRef.current) {
+                isStoppedRef.current = true;
+                scanner.stop()
+                  .then(() => {
+                    if (isMounted) {
+                      setIsScanning(false);
+                    }
+                  })
+                  .catch((err) => {
+                    // Ignore "not running" errors - scanner may have already stopped
+                    const errorMsg = err instanceof Error ? err.message : String(err);
+                    if (!errorMsg.includes("not running") && !errorMsg.includes("not started") && !errorMsg.includes("not paused")) {
+                      console.error("[QRScanner] Error stopping scanner:", err);
+                    }
+                    if (isMounted) {
+                      setIsScanning(false);
+                    }
+                  });
+              }
             } else if (deviceId.length === 0) {
               setError("Invalid QR code format. Please scan a valid device ID.");
             }
@@ -134,8 +135,6 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
             if (errorMessage.includes("No QR code") || errorMessage.includes("NotFoundException")) {
               return;
             }
-            // Only show actual errors
-            console.debug("QR Scanner error:", errorMessage);
           }
         );
         setIsScanning(true);
@@ -163,29 +162,24 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
     return () => {
       isMounted = false;
       clearTimeout(timer);
-      if (scannerRef.current) {
-        // Try to stop scanner, but ignore errors if it's not running
+      // Guard against double-stop
+      if (scannerRef.current && !isStoppedRef.current) {
+        isStoppedRef.current = true;
         scannerRef.current
           .stop()
           .then(() => {
             scannerRef.current?.clear();
           })
           .catch((err) => {
-            // Ignore errors if scanner is not running - this is expected during cleanup
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            if (!errorMsg.includes("not running") && 
-                !errorMsg.includes("not started") && 
-                !errorMsg.includes("not paused") &&
-                !errorMsg.includes("Cannot stop")) {
-              console.error("Error stopping scanner:", err);
-            }
+            // Ignore ALL errors during cleanup - scanner may already be stopped
+            // This is expected and harmless
           });
       }
     };
   }, []); // Empty deps - callback is stored in ref
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 p-4">
       <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold text-emerald-900">Scan QR Code</h2>

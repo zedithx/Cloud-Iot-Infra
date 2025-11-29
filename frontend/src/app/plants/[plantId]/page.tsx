@@ -15,6 +15,7 @@ import {
   type PlantProfile
 } from "@/lib/plantProfiles";
 import { setDevicePlantType } from "@/lib/api";
+import { getPlantName } from "@/lib/localStorage";
 
 function formatMetric(
   value?: number | null,
@@ -43,6 +44,15 @@ export default function PlantDetailPage() {
   const [lockError, setLockError] = useState<string | null>(null);
   const [lockSuccess, setLockSuccess] = useState<boolean>(false);
   const [recentReadingsTab, setRecentReadingsTab] = useState<"disease" | "metrics">("metrics");
+
+  // Get custom plant name from localStorage, fallback to formatted device ID
+  const displayName = useMemo(() => {
+    const customName = getPlantName(plantId);
+    if (customName) {
+      return customName;
+    }
+    return plantId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }, [plantId]);
 
   const selectedProfile: PlantProfile = useMemo(
     () =>
@@ -253,7 +263,7 @@ export default function PlantDetailPage() {
             {summary.statusLabel}
           </span>
           <h1 className="text-3xl font-semibold text-emerald-900 sm:text-4xl md:text-5xl">
-            {plantId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+            {displayName}
           </h1>
           <p className="text-sm text-emerald-700">
             Latest reading: <strong>{summary.lastSeen}</strong>

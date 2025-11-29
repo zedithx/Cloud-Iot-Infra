@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { formatDistanceToNow } from "date-fns";
 import { getPlantName } from "@/lib/localStorage";
 import type { PlantSnapshot } from "@/types/telemetry";
 
@@ -29,15 +28,12 @@ function getDisplayName(plant: PlantSnapshot): string {
 
 export default function PlantCard({ plant, onRemove }: PlantCardProps) {
   const status = statusLabel(plant);
-  const lastSeen = plant.lastSeen
-    ? formatDistanceToNow(plant.lastSeen * 1000, { addSuffix: true })
-    : "Unknown";
   const displayName = getDisplayName(plant);
 
   const handleRemove = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (onRemove && confirm(`Remove "${displayName}" from your list?`)) {
+    if (onRemove) {
       onRemove(plant.plantId);
     }
   };
@@ -52,12 +48,12 @@ export default function PlantCard({ plant, onRemove }: PlantCardProps) {
       {onRemove && (
         <button
           onClick={handleRemove}
-          className="absolute right-4 top-4 z-20 rounded-full p-1.5 text-rose-500 transition hover:bg-rose-50 hover:text-rose-600"
+          className="absolute right-3 top-3 z-20 rounded-full bg-white/95 p-2.5 text-rose-500 shadow-md transition hover:bg-rose-50 hover:text-rose-600 hover:shadow-lg"
           aria-label="Remove plant"
           title="Remove plant"
         >
           <svg
-            className="h-4 w-4"
+            className="h-5 w-5"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -65,8 +61,8 @@ export default function PlantCard({ plant, onRemove }: PlantCardProps) {
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
+              strokeWidth={2.5}
+              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
             />
           </svg>
         </button>
@@ -76,15 +72,12 @@ export default function PlantCard({ plant, onRemove }: PlantCardProps) {
         href={`/plants/${plant.plantId}`}
         className="relative z-10 flex h-full flex-col gap-4"
       >
-        <div className="flex items-center justify-between">
+        <div className="flex items-center pr-12">
           <span className={`pill ${status.tone}`}>
             {status.label}
             <span aria-hidden className="text-base">
               {plant.disease ? "🌧️" : "🌼"}
             </span>
-          </span>
-          <span className="rounded-full bg-emerald-50/80 px-3 py-1 text-[0.65rem] font-medium text-emerald-600 shadow-sm sm:text-xs">
-            {lastSeen}
           </span>
         </div>
         <div className="space-y-3">

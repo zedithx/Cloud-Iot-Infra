@@ -11,7 +11,7 @@ except ImportError:
     import qrcode
 
 # Generate QR code
-text = "yang_si_jun_from_bytedance"
+text = "esp32s3_cam_01"
 qr = qrcode.QRCode(
     version=1,
     error_correction=qrcode.constants.ERROR_CORRECT_L,

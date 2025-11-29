@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import usePlantSnapshots from "@/hooks/usePlantSnapshots";
 import PlantCard from "@/components/PlantCard";
 import QRScanner from "@/components/QRScanner";
 import PlantInfoModal from "@/components/PlantInfoModal";
+import DeleteConfirmationModal from "@/components/DeleteConfirmationModal";
 import { addScannedPlant, removeScannedPlant } from "@/lib/localStorage";
 
 export default function HomePage() {
@@ -13,27 +14,11 @@ export default function HomePage() {
   const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
   const [scannedDeviceId, setScannedDeviceId] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
-
-  // Debug state changes
-  useEffect(() => {
-    console.log("[HomePage] State changed:", {
-      isScannerOpen,
-      isConfirmationOpen,
-      scannedDeviceId,
-    });
-  }, [isScannerOpen, isConfirmationOpen, scannedDeviceId]);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [plantToDelete, setPlantToDelete] = useState<string | null>(null);
 
   const handleScanSuccess = useCallback((deviceId: string) => {
-    console.log("[handleScanSuccess] ===== CALLED =====");
-    console.log("[handleScanSuccess] deviceId:", deviceId);
-    console.log("[handleScanSuccess] Current state before update:", {
-      isScannerOpen,
-      isConfirmationOpen,
-      scannedDeviceId,
-    });
-    
     if (!deviceId || deviceId.trim().length === 0) {
-      console.error("[handleScanSuccess] Invalid deviceId received:", deviceId);
       setApiError("Invalid QR code: empty device ID");
       return;
     }
@@ -41,30 +26,15 @@ export default function HomePage() {
     // Clear any previous errors
     setApiError(null);
     
-    // Use functional updates to ensure state is set correctly
-    console.log("[handleScanSuccess] Setting scannedDeviceId...");
-    setScannedDeviceId((prev) => {
-      console.log("[handleScanSuccess] setScannedDeviceId prev:", prev, "new:", deviceId);
-      return deviceId;
-    });
-    
-    console.log("[handleScanSuccess] Closing scanner...");
+    // Close scanner first
     setIsScannerOpen(false);
     
-    // Use setTimeout to ensure state updates are batched correctly
+    // Then open modal after a brief delay to ensure scanner closes
     setTimeout(() => {
-      console.log("[handleScanSuccess] Opening confirmation modal...");
+      setScannedDeviceId(deviceId);
       setIsConfirmationOpen(true);
-      setScannedDeviceId((prev) => {
-        if (prev !== deviceId) {
-          console.log("[handleScanSuccess] scannedDeviceId was lost, restoring:", deviceId);
-          return deviceId;
-        }
-        return prev;
-      });
-      console.log("[handleScanSuccess] Modal should now be open");
-    }, 0);
-  }, [isScannerOpen, isConfirmationOpen, scannedDeviceId]);
+    }, 150);
+  }, []);
 
   const handleConfirm = (deviceId: string, plantName: string) => {
     try {
@@ -90,8 +60,22 @@ export default function HomePage() {
   };
 
   const handleRemovePlant = (deviceId: string) => {
-    removeScannedPlant(deviceId);
-    void refresh(); // Refresh the plant list after removal
+    setPlantToDelete(deviceId);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleConfirmDelete = () => {
+    if (plantToDelete) {
+      removeScannedPlant(plantToDelete);
+      setIsDeleteModalOpen(false);
+      setPlantToDelete(null);
+      void refresh(); // Refresh the plant list after removal
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setIsDeleteModalOpen(false);
+    setPlantToDelete(null);
   };
 
   return (
@@ -200,13 +184,21 @@ export default function HomePage() {
         />
       )}
 
-      {isConfirmationOpen && scannedDeviceId ? (
+      {isConfirmationOpen && scannedDeviceId && (
         <PlantInfoModal
           deviceId={scannedDeviceId}
           onConfirm={handleConfirm}
           onCancel={handleCancel}
         />
-      ) : null}
+      )}
+
+      {isDeleteModalOpen && plantToDelete && (
+        <DeleteConfirmationModal
+          deviceId={plantToDelete}
+          onConfirm={handleConfirmDelete}
+          onCancel={handleCancelDelete}
+        />
+      )}
     </main>
   );
 }
