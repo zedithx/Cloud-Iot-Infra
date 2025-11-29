@@ -37,9 +37,9 @@ export default function HomePage() {
     }, 150);
   }, []);
 
-  const handleConfirm = (deviceId: string, plantName: string) => {
+  const handleConfirm = async (deviceId: string, plantName: string) => {
     try {
-      addScannedPlant(deviceId, plantName);
+      await addScannedPlant(deviceId, plantName);
       setIsConfirmationOpen(false);
       setScannedDeviceId(null);
       setApiError(null);
@@ -67,14 +67,20 @@ export default function HomePage() {
     setIsDeleteModalOpen(true);
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (plantToDelete) {
-      const plantName = getPlantName(plantToDelete) || plantToDelete.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-      removeScannedPlant(plantToDelete);
-      setIsDeleteModalOpen(false);
-      setPlantToDelete(null);
-      toast.success(`🗑️ Plant "${plantName}" removed from your list`);
-      void refresh(); // Refresh the plant list after removal
+      try {
+        const plantName = getPlantName(plantToDelete) || plantToDelete.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        await removeScannedPlant(plantToDelete);
+        setIsDeleteModalOpen(false);
+        setPlantToDelete(null);
+        toast.success(`🗑️ Plant "${plantName}" removed from your list`);
+        void refresh(); // Refresh the plant list after removal
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to remove plant";
+        toast.error(`Failed to remove plant: ${message}`);
+        console.error("Error removing plant:", err);
+      }
     }
   };
 

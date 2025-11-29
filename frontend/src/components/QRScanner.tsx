@@ -211,9 +211,19 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
     }
 
     try {
+      // Temporarily set scanning to false to prevent UI issues
+      setIsScanning(false);
+      
       // Stop current scanner
-      await scannerRef.current.stop();
-      isStoppedRef.current = false;
+      if (!isStoppedRef.current) {
+        isStoppedRef.current = true;
+        await scannerRef.current.stop().catch(() => {
+          // Ignore errors if already stopped
+        });
+      }
+
+      // Clear the scanner
+      scannerRef.current.clear();
 
       // Switch to next camera
       const nextIndex = (currentCameraIndex + 1) % availableCameras.length;
@@ -230,6 +240,9 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
       if (containerRef.current) {
         containerRef.current.setAttribute("data-front-camera", String(isFront));
       }
+
+      // Reset stopped flag before starting new camera
+      isStoppedRef.current = false;
 
       // Start with new camera
       await scannerRef.current.start(
@@ -260,9 +273,14 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
           }
         }
       );
+      
+      // Set scanning back to true after successful start
+      setIsScanning(true);
+      setError(null);
     } catch (err) {
       console.error("Failed to flip camera:", err);
       setError("Failed to switch camera. Please try again.");
+      setIsScanning(false);
     }
   };
 

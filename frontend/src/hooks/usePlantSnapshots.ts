@@ -20,8 +20,8 @@ export default function usePlantSnapshots(): UsePlantSnapshotsResult {
     setIsLoading(true);
     setError(undefined);
     try {
-      // Get scanned plants from localStorage (only show scanned plants)
-      const scannedPlants = getScannedPlants();
+      // Get scanned plants from backend/localStorage (only show scanned plants)
+      const scannedPlants = await getScannedPlants();
       
       if (scannedPlants.length === 0) {
         setPlants([]);

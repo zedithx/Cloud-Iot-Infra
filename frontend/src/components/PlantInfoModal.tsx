@@ -54,12 +54,19 @@ export default function PlantInfoModal({
     void loadPlantData();
 
     // Check for duplicate device ID
-    const scannedPlants = getScannedPlants();
-    const existing = scannedPlants.find((p) => p.deviceId === deviceId);
-    if (existing) {
-      setIsDuplicate(true);
-      setPlantName(existing.plantName);
-    }
+    const checkDuplicate = async () => {
+      try {
+        const scannedPlants = await getScannedPlants();
+        const existing = scannedPlants.find((p) => p.deviceId === deviceId);
+        if (existing) {
+          setIsDuplicate(true);
+          setPlantName(existing.plantName);
+        }
+      } catch (err) {
+        console.error("Failed to check for duplicate:", err);
+      }
+    };
+    void checkDuplicate();
   }, [deviceId]);
 
   const handleConfirm = () => {

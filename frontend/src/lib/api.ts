@@ -395,3 +395,60 @@ export async function setDevicePlantType(
   }
 }
 
+export type ScannedPlant = {
+  deviceId: string;
+  plantName: string;
+};
+
+export async function fetchScannedPlants(): Promise<ScannedPlant[]> {
+  if (USE_MOCK_API) {
+    // Return empty array for mock - plants come from localStorage in mock mode
+    return [];
+  }
+
+  try {
+    const response = await apiClient.get<ScannedPlant[]>("/scanned-plants");
+    return response.data;
+  } catch (error) {
+    console.error("Failed to fetch scanned plants", error);
+    throw error;
+  }
+}
+
+export async function addScannedPlantToBackend(
+  deviceId: string,
+  plantName: string
+): Promise<ScannedPlant> {
+  if (USE_MOCK_API) {
+    // In mock mode, just return the data (localStorage handles it)
+    return { deviceId, plantName };
+  }
+
+  try {
+    const response = await apiClient.post<ScannedPlant>("/scanned-plants", {
+      deviceId,
+      plantName,
+    });
+    return response.data;
+  } catch (error) {
+    console.error("Failed to add scanned plant to backend", error);
+    throw error;
+  }
+}
+
+export async function removeScannedPlantFromBackend(
+  deviceId: string
+): Promise<void> {
+  if (USE_MOCK_API) {
+    // In mock mode, localStorage handles it
+    return;
+  }
+
+  try {
+    await apiClient.delete(`/scanned-plants/${deviceId}`);
+  } catch (error) {
+    console.error("Failed to remove scanned plant from backend", error);
+    throw error;
+  }
+}
+

@@ -116,6 +116,19 @@ class ActuatorCommand(BaseModel):
         populate_by_name = True
 
 
+class ScannedPlantRequest(BaseModel):
+    deviceId: str = Field(..., alias="deviceId")
+    plantName: str = Field(..., alias="plantName", min_length=1, max_length=50)
+
+
+class ScannedPlantResponse(BaseModel):
+    deviceId: str = Field(..., alias="deviceId")
+    plantName: str = Field(..., alias="plantName")
+
+    class Config:
+        populate_by_name = True
+
+
 class PlantTypeRequest(BaseModel):
     plantType: str = Field(..., min_length=1)
 
@@ -642,6 +655,112 @@ def set_device_plant_type(device_id: str, request: PlantTypeRequest) -> Dict[str
         "plantType": plant_type_lower,
         "status": "set",
     }
+
+
+def _device_id_to_timestamp(device_id: str) -> int:
+    """Convert device ID string to a numeric timestamp for DynamoDB sort key."""
+    # Use hash to convert string to consistent number
+    return abs(hash(device_id)) % (10 ** 10)  # Keep it within reasonable int range
+
+
+def _timestamp_to_device_id(items: List[Dict[str, Any]]) -> Dict[int, str]:
+    """Extract device IDs from items by checking plantName field format."""
+    device_id_map = {}
+    for item in items:
+        plant_name = item.get("plantName", "")
+        # Check if plantName contains deviceId|plantName format
+        if "|" in plant_name:
+            parts = plant_name.split("|", 1)
+            if len(parts) == 2:
+                device_id_map[item.get("timestamp", 0)] = parts[0]
+    return device_id_map
+
+
+@app.get("/scanned-plants", response_model=List[ScannedPlantResponse])
+def get_scanned_plants() -> List[ScannedPlantResponse]:
+    """
+    Get all scanned plants (user's plant list).
+    Uses a special partition key 'USER_PLANTS' to store user preferences.
+    """
+    try:
+        # Query for all items with partition key 'USER_PLANTS'
+        response = telemetry_table.query(
+            KeyConditionExpression=Key("deviceId").eq("USER_PLANTS")
+        )
+        
+        plants = []
+        device_id_map = _timestamp_to_device_id(response.get("Items", []))
+        
+        for item in response.get("Items", []):
+            timestamp = item.get("timestamp", 0)
+            plant_name_full = item.get("plantName", "")
+            
+            # Extract deviceId and plantName from the stored format
+            if "|" in plant_name_full:
+                parts = plant_name_full.split("|", 1)
+                if len(parts) == 2:
+                    actual_device_id = parts[0]
+                    plant_name = parts[1]
+                    plants.append(ScannedPlantResponse(
+                        deviceId=actual_device_id,
+                        plantName=plant_name
+                    ))
+        
+        return plants
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error("Failed to get scanned plants: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to retrieve scanned plants")
+
+
+@app.post("/scanned-plants", response_model=ScannedPlantResponse, status_code=201)
+def add_scanned_plant(plant: ScannedPlantRequest) -> ScannedPlantResponse:
+    """
+    Add or update a scanned plant.
+    Uses deviceId='USER_PLANTS' as partition key and hash(deviceId) as sort key.
+    """
+    try:
+        # Convert deviceId to numeric timestamp for sort key
+        timestamp_key = _device_id_to_timestamp(plant.deviceId)
+        
+        # Store deviceId and plantName in plantName field with delimiter
+        item = {
+            "deviceId": "USER_PLANTS",
+            "timestamp": timestamp_key,
+            "plantName": f"{plant.deviceId}|{plant.plantName}",  # Store both with delimiter
+        }
+        
+        telemetry_table.put_item(Item=item)
+        
+        return ScannedPlantResponse(
+            deviceId=plant.deviceId,
+            plantName=plant.plantName
+        )
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error("Failed to add scanned plant: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to save scanned plant")
+
+
+@app.delete("/scanned-plants/{device_id}", status_code=204)
+def remove_scanned_plant(device_id: str) -> None:
+    """
+    Remove a scanned plant from the user's list.
+    """
+    try:
+        # Convert deviceId to numeric timestamp to find the item
+        timestamp_key = _device_id_to_timestamp(device_id)
+        
+        telemetry_table.delete_item(
+            Key={
+                "deviceId": "USER_PLANTS",
+                "timestamp": timestamp_key,
+            }
+        )
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error("Failed to remove scanned plant: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to remove scanned plant")
 
 
 @app.get("/")
