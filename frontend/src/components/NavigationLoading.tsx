@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, Suspense } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import LoadingScreen from "./LoadingScreen";
 
-const MIN_DISPLAY_TIME = 1500; // 1.5 seconds minimum display time
+const MIN_DISPLAY_TIME = 1000; // 1 second minimum display time
 
 function NavigationLoadingContent() {
   const pathname = usePathname();

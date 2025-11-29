@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import LoadingScreen from "@/components/LoadingScreen";
 
-const MIN_DISPLAY_TIME = 1500; // 1.5 seconds minimum display time
+const MIN_DISPLAY_TIME = 1000; // 1 second minimum display time
 
 export default function Loading() {
   const [showLoading, setShowLoading] = useState(true);
