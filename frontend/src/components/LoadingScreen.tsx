@@ -16,7 +16,7 @@ export default function LoadingScreen() {
         
         {/* Loading text */}
         <div className="flex flex-col items-center gap-2">
-          <p className="text-xl font-semibold text-white animate-pulse">
+          <p className="text-xl font-semibold text-emerald-900 animate-pulse">
             PlantPulse
           </p>
         </div>

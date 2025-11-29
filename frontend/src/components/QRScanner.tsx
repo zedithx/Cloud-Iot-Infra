@@ -13,6 +13,10 @@ const SCANNER_CONTAINER_ID = "qr-scanner-container";
 export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
   const [error, setError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [availableCameras, setAvailableCameras] = useState<{ id: string; label: string }[]>([]);
+  const [currentCameraIndex, setCurrentCameraIndex] = useState(0);
+  const [isFrontCamera, setIsFrontCamera] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const onScanSuccessRef = useRef(onScanSuccess);
@@ -22,6 +26,20 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
   useEffect(() => {
     onScanSuccessRef.current = onScanSuccess;
   }, [onScanSuccess]);
+
+  // Detect if device is mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      ) || window.innerWidth <= 768;
+      setIsMobile(isMobileDevice);
+    };
+    
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -45,44 +63,53 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
         let cameraId: string | { facingMode: string } = { facingMode: "environment" };
         let isFrontCamera = false;
         
+        let devices: { id: string; label: string }[] = [];
         try {
           // Try to get available cameras
-          const devices = await Html5Qrcode.getCameras();
+          const cameraDevices = await Html5Qrcode.getCameras();
+          devices = cameraDevices.map(d => ({ id: d.id, label: d.label }));
           if (devices && devices.length > 0) {
+            setAvailableCameras(devices);
             // Prefer back camera if available
-            const backCamera = devices.find((d) => {
+            const backCameraIndex = devices.findIndex((d) => {
               const label = d.label.toLowerCase();
               return label.includes("back") || label.includes("rear") || label.includes("environment");
             });
-            if (backCamera) {
-              cameraId = backCamera.id;
-              isFrontCamera = false;
+            if (backCameraIndex >= 0) {
+              cameraId = devices[backCameraIndex].id;
+              setCurrentCameraIndex(backCameraIndex);
+              setIsFrontCamera(false);
             } else {
               // Check if it's a front camera
-              const frontCamera = devices.find((d) => {
+              const frontCameraIndex = devices.findIndex((d) => {
                 const label = d.label.toLowerCase();
                 return label.includes("front") || label.includes("user");
               });
-              if (frontCamera) {
-                cameraId = frontCamera.id;
-                isFrontCamera = true;
+              if (frontCameraIndex >= 0) {
+                cameraId = devices[frontCameraIndex].id;
+                setCurrentCameraIndex(frontCameraIndex);
+                setIsFrontCamera(true);
               } else {
                 cameraId = devices[0].id;
+                setCurrentCameraIndex(0);
                 // Assume front camera if we can't determine
-                isFrontCamera = true;
+                setIsFrontCamera(true);
               }
             }
           }
         } catch (camErr) {
           console.warn("Could not enumerate cameras, using facingMode:", camErr);
           // Fallback to facingMode (back camera)
-          isFrontCamera = false;
+          setIsFrontCamera(false);
         }
 
         // Add data attribute to container to indicate if it's front camera
         if (containerRef.current) {
           containerRef.current.setAttribute("data-front-camera", String(isFrontCamera));
         }
+        
+        // Store initial camera state
+        setIsFrontCamera(isFrontCamera);
 
         // Reset stopped flag when starting
         isStoppedRef.current = false;
@@ -178,6 +205,67 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
     };
   }, []); // Empty deps - callback is stored in ref
 
+  const flipCamera = async () => {
+    if (!scannerRef.current || !isScanning || availableCameras.length < 2) {
+      return;
+    }
+
+    try {
+      // Stop current scanner
+      await scannerRef.current.stop();
+      isStoppedRef.current = false;
+
+      // Switch to next camera
+      const nextIndex = (currentCameraIndex + 1) % availableCameras.length;
+      const nextCamera = availableCameras[nextIndex];
+      const nextCameraId = nextCamera.id;
+      
+      // Determine if it's a front camera
+      const label = nextCamera.label.toLowerCase();
+      const isFront = label.includes("front") || label.includes("user");
+      setIsFrontCamera(isFront);
+      setCurrentCameraIndex(nextIndex);
+
+      // Update container attribute
+      if (containerRef.current) {
+        containerRef.current.setAttribute("data-front-camera", String(isFront));
+      }
+
+      // Start with new camera
+      await scannerRef.current.start(
+        nextCameraId,
+        {
+          fps: 10,
+          qrbox: { width: 250, height: 250 },
+          aspectRatio: 1.0,
+        },
+        (decodedText) => {
+          const deviceId = decodedText.trim();
+          if (deviceId.length > 0) {
+            try {
+              onScanSuccessRef.current(deviceId);
+            } catch (err) {
+              console.error("[QRScanner] Error in callback:", err);
+            }
+            
+            if (!isStoppedRef.current && scannerRef.current) {
+              isStoppedRef.current = true;
+              scannerRef.current.stop().catch(() => {});
+            }
+          }
+        },
+        (errorMessage) => {
+          if (errorMessage.includes("No QR code") || errorMessage.includes("NotFoundException")) {
+            return;
+          }
+        }
+      );
+    } catch (err) {
+      console.error("Failed to flip camera:", err);
+      setError("Failed to switch camera. Please try again.");
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 p-4">
       <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
@@ -218,12 +306,36 @@ export default function QRScanner({ onScanSuccess, onClose }: QRScannerProps) {
           </div>
         ) : (
           <>
-            <div
-              id={SCANNER_CONTAINER_ID}
-              ref={containerRef}
-              className="mb-4 aspect-square w-full max-w-sm mx-auto rounded-2xl overflow-hidden bg-black"
-              style={{ position: "relative" }}
-            />
+            <div className="relative mb-4">
+              <div
+                id={SCANNER_CONTAINER_ID}
+                ref={containerRef}
+                className="aspect-square w-full max-w-sm mx-auto rounded-2xl overflow-hidden bg-black"
+                style={{ position: "relative" }}
+              />
+              {isMobile && availableCameras.length > 1 && isScanning && (
+                <button
+                  onClick={flipCamera}
+                  className="absolute bottom-4 right-4 rounded-full bg-white/90 p-3 text-emerald-600 shadow-lg transition hover:bg-white hover:scale-110"
+                  aria-label="Flip camera"
+                  title="Flip camera"
+                >
+                  <svg
+                    className="h-6 w-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
             {isScanning ? (
               <p className="text-center text-sm text-emerald-700">
                 Point your camera at a QR code
