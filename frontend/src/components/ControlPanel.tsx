@@ -10,6 +10,7 @@ type ToggleState = "idle" | "pending" | "success" | "error";
 
 type ControlPanelProps = {
   plantId: string;
+  plantName?: string;
   profileLabel?: string;
   currentValues?: {
     soilMoisture?: number | null;
@@ -78,6 +79,7 @@ const ACTION_META: Record<
 
 export default function ControlPanel({
   plantId,
+  plantName,
   profileLabel,
   currentValues = {},
 }: ControlPanelProps) {
@@ -421,7 +423,7 @@ export default function ControlPanel({
               Remote actuator control
             </h3>
             <p className="text-xs text-emerald-700/70 sm:text-sm">
-              Set target sensor values to activate actuators for <strong>{plantId}</strong>.
+              Set target sensor values to activate actuators for <strong>{plantName || plantId}</strong>.
               Actuators will run until the sensor reaches the target value.
             </p>
           </div>

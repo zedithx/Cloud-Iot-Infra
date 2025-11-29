@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { format } from "date-fns";
+import { formatTimestampSGT } from "@/lib/dateUtils";
 import type { PlantTimeSeriesPoint } from "@/types/telemetry";
 
 type DiseaseRiskChartProps = {
@@ -20,7 +20,7 @@ type ChartDatum = PlantTimeSeriesPoint & { label: string };
 function formatPoints(points: PlantTimeSeriesPoint[]): ChartDatum[] {
   return points.map((point) => ({
     ...point,
-    label: format(point.timestamp * 1000, "MMM d, HH:mm")
+    label: formatTimestampSGT(point.timestamp, "MMM d, HH:mm")
   }));
 }
 

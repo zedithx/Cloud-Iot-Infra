@@ -144,6 +144,29 @@ class PlantMetricsResponse(BaseModel):
         populate_by_name = True
 
 
+class ThresholdRecommendation(BaseModel):
+    actuator: Literal["pump", "fan", "lights"]
+    currentThreshold: Optional[float] = Field(None, alias="currentThreshold")
+    recommendedThreshold: float = Field(..., alias="recommendedThreshold")
+    reasoning: List[str]
+    confidence: Literal["low", "medium", "high"]
+    trends: List[str]
+
+    class Config:
+        populate_by_name = True
+
+
+class ThresholdRecommendationResponse(BaseModel):
+    deviceId: str = Field(..., alias="deviceId")
+    plantType: Optional[str] = Field(None, alias="plantType")
+    recommendations: List[ThresholdRecommendation]
+    timeWindowHours: int = Field(..., alias="timeWindowHours")
+    dataPoints: int = Field(..., alias="dataPoints")
+
+    class Config:
+        populate_by_name = True
+
+
 # Pre-established plant type values
 PLANT_TYPE_METRICS: Dict[str, Dict[str, Dict[str, float]]] = {
     "basil": {
@@ -772,6 +795,495 @@ def remove_scanned_plant(device_id: str) -> None:
     except Exception as e:
         logger.error("Failed to remove scanned plant: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to remove scanned plant")
+
+
+def _get_device_config(device_id: str) -> Dict[str, Any]:
+    """Get device configuration (plant type, thresholds) from DynamoDB."""
+    try:
+        response = telemetry_table.query(
+            KeyConditionExpression=Key("deviceId").eq(device_id) & Key("timestamp").eq("CONFIG"),
+            Limit=1,
+        )
+        items = response.get("Items", [])
+        if items:
+            item = items[0]
+            return {
+                "plantType": item.get("plantType"),
+                "thresholds": {
+                    "soilMoisture": item.get("soilMoistureThreshold"),
+                    "temperatureC": item.get("temperatureCThreshold"),
+                    "lightLux": item.get("lightLuxThreshold"),
+                }
+            }
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.warning("Failed to get device config: %s", e)
+    return {"plantType": None, "thresholds": {}}
+
+
+def _analyze_trends(telemetry_points: List[PlantTimeSeriesPoint], time_window_hours: int) -> Dict[str, Any]:
+    """Analyze trends in telemetry data to detect rapid changes with detailed context."""
+    if not telemetry_points or len(telemetry_points) < 2:
+        return {
+            "temperature_trend": "insufficient_data",
+            "humidity_trend": "insufficient_data",
+            "light_trend": "insufficient_data",
+            "soil_moisture_trend": "insufficient_data",
+            "temperature_rate": 0.0,
+            "temperature_start": None,
+            "temperature_end": None,
+            "temperature_period_hours": 0.0,
+            "temperature_current": None,
+            "humidity_change": 0.0,
+            "humidity_start": None,
+            "humidity_end": None,
+            "humidity_period_hours": 0.0,
+            "humidity_current": None,
+            "light_change": 0.0,
+            "light_start": None,
+            "light_end": None,
+            "light_period_hours": 0.0,
+            "light_current": None,
+            "soil_moisture_change": 0.0,
+            "soil_moisture_start": None,
+            "soil_moisture_end": None,
+            "soil_moisture_period_hours": 0.0,
+            "soil_moisture_current": None,
+        }
+    
+    # Sort by timestamp (oldest first)
+    sorted_points = sorted(telemetry_points, key=lambda p: p.timestamp)
+    
+    # Filter out None values and get valid data points
+    temp_points = [(p.timestamp, p.temperature_c) for p in sorted_points if p.temperature_c is not None]
+    humidity_points = [(p.timestamp, p.humidity) for p in sorted_points if p.humidity is not None]
+    light_points = [(p.timestamp, p.light_lux) for p in sorted_points if p.light_lux is not None]
+    soil_moisture_points = [(p.timestamp, p.soil_moisture) for p in sorted_points if p.soil_moisture is not None]
+    
+    trends = {
+        "temperature_trend": "stable",
+        "humidity_trend": "stable",
+        "light_trend": "stable",
+        "soil_moisture_trend": "stable",
+        "temperature_rate": 0.0,
+        "temperature_start": None,
+        "temperature_end": None,
+        "temperature_period_hours": 0.0,
+        "temperature_current": sorted_points[-1].temperature_c if sorted_points[-1].temperature_c is not None else None,
+        "humidity_change": 0.0,
+        "humidity_start": None,
+        "humidity_end": None,
+        "humidity_period_hours": 0.0,
+        "humidity_current": sorted_points[-1].humidity if sorted_points[-1].humidity is not None else None,
+        "light_change": 0.0,
+        "light_start": None,
+        "light_end": None,
+        "light_period_hours": 0.0,
+        "light_current": sorted_points[-1].light_lux if sorted_points[-1].light_lux is not None else None,
+        "soil_moisture_change": 0.0,
+        "soil_moisture_start": None,
+        "soil_moisture_end": None,
+        "soil_moisture_period_hours": 0.0,
+        "soil_moisture_current": sorted_points[-1].soil_moisture if sorted_points[-1].soil_moisture is not None else None,
+    }
+    
+    # Analyze temperature trend
+    if len(temp_points) >= 2:
+        # Calculate rate of change over last 3 hours
+        current_time = sorted_points[-1].timestamp
+        three_hours_ago = current_time - (3 * 3600)
+        
+        recent_temps = [(t, v) for t, v in temp_points if t >= three_hours_ago]
+        if len(recent_temps) >= 2:
+            first_temp = recent_temps[0][1]
+            last_temp = recent_temps[-1][1]
+            time_diff_seconds = recent_temps[-1][0] - recent_temps[0][0]
+            time_diff_hours = time_diff_seconds / 3600.0
+            if time_diff_hours > 0:
+                temp_rate = (last_temp - first_temp) / time_diff_hours
+                trends["temperature_rate"] = temp_rate
+                trends["temperature_start"] = first_temp
+                trends["temperature_end"] = last_temp
+                trends["temperature_period_hours"] = round(time_diff_hours, 1)
+                
+                # Detect SHARP/rapid changes only (>3°C/hour or >7°C in 3 hours for rapid, >4°C/hour or >10°C in 3 hours for very rapid)
+                # Only flag trends that are rapid enough to require proactive action before auto-heal kicks in
+                if temp_rate > 4.0 or (last_temp - first_temp) > 10.0:
+                    trends["temperature_trend"] = "increasing_very_rapidly"
+                elif temp_rate > 3.0 or (last_temp - first_temp) > 7.0:
+                    trends["temperature_trend"] = "increasing_rapidly"
+                elif temp_rate < -3.0 or (last_temp - first_temp) < -7.0:
+                    trends["temperature_trend"] = "decreasing_rapidly"
+                # Don't flag moderate increases - auto-heal can handle those
+    
+    # Analyze humidity trend (last 6 hours)
+    if len(humidity_points) >= 2:
+        current_time = sorted_points[-1].timestamp
+        six_hours_ago = current_time - (6 * 3600)
+        
+        recent_humidity = [(t, v) for t, v in humidity_points if t >= six_hours_ago]
+        if len(recent_humidity) >= 2:
+            first_humidity = recent_humidity[0][1]
+            last_humidity = recent_humidity[-1][1]
+            humidity_change = last_humidity - first_humidity
+            time_diff_seconds = recent_humidity[-1][0] - recent_humidity[0][0]
+            time_diff_hours = time_diff_seconds / 3600.0
+            trends["humidity_change"] = humidity_change
+            trends["humidity_start"] = first_humidity
+            trends["humidity_end"] = last_humidity
+            trends["humidity_period_hours"] = round(time_diff_hours, 1)
+            
+            # Only flag sharp humidity changes (>10% in 6 hours for rapid drop, >15% for very rapid)
+            if humidity_change < -15.0:
+                trends["humidity_trend"] = "decreasing_very_rapidly"
+            elif humidity_change < -10.0:
+                trends["humidity_trend"] = "decreasing_rapidly"
+            # Don't flag moderate changes - auto-heal can handle those
+    
+    # Analyze light trend (last 6 hours)
+    if len(light_points) >= 2:
+        current_time = sorted_points[-1].timestamp
+        six_hours_ago = current_time - (6 * 3600)
+        
+        recent_light = [(t, v) for t, v in light_points if t >= six_hours_ago]
+        if len(recent_light) >= 2:
+            first_light = recent_light[0][1]
+            last_light = recent_light[-1][1]
+            time_diff_seconds = recent_light[-1][0] - recent_light[0][0]
+            time_diff_hours = time_diff_seconds / 3600.0
+            if first_light > 0:
+                light_change_pct = ((last_light - first_light) / first_light) * 100
+                trends["light_change"] = light_change_pct
+                trends["light_start"] = first_light
+                trends["light_end"] = last_light
+                trends["light_period_hours"] = round(time_diff_hours, 1)
+                
+                # Only flag sharp light changes (>30% drop for rapid, >40% for very rapid)
+                if light_change_pct < -40.0:
+                    trends["light_trend"] = "decreasing_very_rapidly"
+                elif light_change_pct < -30.0:
+                    trends["light_trend"] = "decreasing_rapidly"
+                # Don't flag moderate changes - auto-heal can handle those
+    
+    # Analyze soil moisture trend (last 6 hours)
+    if len(soil_moisture_points) >= 2:
+        current_time = sorted_points[-1].timestamp
+        six_hours_ago = current_time - (6 * 3600)
+        
+        recent_moisture = [(t, v) for t, v in soil_moisture_points if t >= six_hours_ago]
+        if len(recent_moisture) >= 2:
+            first_moisture = recent_moisture[0][1]
+            last_moisture = recent_moisture[-1][1]
+            moisture_change = last_moisture - first_moisture
+            time_diff_seconds = recent_moisture[-1][0] - recent_moisture[0][0]
+            time_diff_hours = time_diff_seconds / 3600.0
+            trends["soil_moisture_change"] = moisture_change
+            trends["soil_moisture_start"] = first_moisture
+            trends["soil_moisture_end"] = last_moisture
+            trends["soil_moisture_period_hours"] = round(time_diff_hours, 1)
+            
+            # Detect SHARP decrease only (moisture dropping very fast - >15% drop for rapid, >20% for very rapid)
+            if moisture_change < -0.20:  # More than 20% drop
+                trends["soil_moisture_trend"] = "decreasing_very_rapidly"
+            elif moisture_change < -0.15:  # More than 15% drop
+                trends["soil_moisture_trend"] = "decreasing_rapidly"
+            # Don't flag moderate changes - auto-heal can handle those
+    
+    return trends
+
+
+def _calculate_recommendations(
+    plant_type: str,
+    trends: Dict[str, Any],
+    current_values: Dict[str, Optional[float]],
+    current_thresholds: Dict[str, Optional[float]]
+) -> List[ThresholdRecommendation]:
+    """Calculate threshold recommendations only when there are concerning trends."""
+    if plant_type not in PLANT_TYPE_METRICS:
+        # Default to basil if plant type not found
+        plant_type = "basil"
+    
+    metrics = PLANT_TYPE_METRICS[plant_type]
+    recommendations = []
+    
+    # Base threshold calculation (30% above min for pump, 20% for fan, 30% for lights)
+    base_soil_moisture = metrics["soilMoisture"]["min"] + (metrics["soilMoisture"]["max"] - metrics["soilMoisture"]["min"]) * 0.3
+    base_temperature = metrics["temperatureC"]["min"] + (metrics["temperatureC"]["max"] - metrics["temperatureC"]["min"]) * 0.2
+    base_light = metrics["lightLux"]["min"] + (metrics["lightLux"]["max"] - metrics["lightLux"]["min"]) * 0.3
+    
+    # PUMP (soilMoisture) recommendation - only for SHARP trends that need proactive action
+    has_concerning_trends = False
+    recommended_soil_moisture = base_soil_moisture
+    reasoning = []
+    trends_detected = []
+    confidence = "medium"
+    
+    # Very rapid or rapid temp increase → increase soil moisture threshold proactively
+    if trends["temperature_trend"] in ["increasing_very_rapidly", "increasing_rapidly"] and trends.get("temperature_start") is not None:
+        has_concerning_trends = True
+        # More aggressive adjustment for very rapid increases
+        if trends["temperature_trend"] == "increasing_very_rapidly":
+            temp_adjustment = min(0.08 + (trends["temperature_rate"] * 0.03), 0.20)
+        else:
+            temp_adjustment = min(0.05 + (trends["temperature_rate"] * 0.02), 0.15)
+        recommended_soil_moisture += temp_adjustment
+        
+        temp_start = trends["temperature_start"]
+        temp_end = trends["temperature_end"]
+        temp_period = trends["temperature_period_hours"]
+        temp_rate = trends["temperature_rate"]
+        temp_current = trends.get("temperature_current")
+        
+        # Create alarming, contextual explanation emphasizing time-to-absorption
+        if temp_current and temp_current > metrics["temperatureC"]["max"]:
+            reasoning.append(f"⚠️ Temperature is very high at {temp_current:.1f}°C, exceeding the optimal range for {plant_type} ({metrics['temperatureC']['min']:.0f}-{metrics['temperatureC']['max']:.0f}°C).")
+        else:
+            reasoning.append(f"⚠️ Temperature is rising sharply from {temp_start:.1f}°C to {temp_end:.1f}°C over just {temp_period:.1f} hours (rate: {temp_rate:.1f}°C/hour).")
+        
+        reasoning.append(f"This sharp temperature increase causes rapid transpiration. Since plants need time to absorb moisture (typically 15-30 minutes), increasing soil moisture threshold by {temp_adjustment:.2f} NOW ensures water is available before the plant experiences stress. Your auto-heal system will maintain this higher threshold.")
+        trends_detected.append("temperature_increasing_rapidly")
+        confidence = "high"
+    
+    # Rapid humidity drop → increase soil moisture threshold proactively
+    if trends["humidity_trend"] in ["decreasing_very_rapidly", "decreasing_rapidly"] and trends.get("humidity_start") is not None:
+        has_concerning_trends = True
+        # More aggressive for very rapid drops
+        if trends["humidity_trend"] == "decreasing_very_rapidly":
+            humidity_adjustment = 0.08 + (abs(trends["humidity_change"]) / 100.0) * 0.08
+        else:
+            humidity_adjustment = 0.05 + (abs(trends["humidity_change"]) / 100.0) * 0.05
+        recommended_soil_moisture += min(humidity_adjustment, 0.15)
+        
+        humidity_start = trends["humidity_start"]
+        humidity_end = trends["humidity_end"]
+        humidity_change = trends["humidity_change"]
+        humidity_period = trends["humidity_period_hours"]
+        
+        reasoning.append(f"⚠️ Humidity is dropping sharply from {humidity_start:.1f}% to {humidity_end:.1f}% over {humidity_period:.1f} hours (change: {humidity_change:.1f}%). This rapid drop significantly increases evaporation. Increasing soil moisture threshold by {min(humidity_adjustment, 0.15):.2f} proactively to account for the time needed for water absorption (15-30 minutes) before the plant shows stress.")
+        trends_detected.append("humidity_decreasing_rapidly")
+        confidence = "high" if confidence == "medium" else confidence
+    
+    # Soil moisture dropping very rapidly → urgent action needed
+    if trends["soil_moisture_trend"] in ["decreasing_very_rapidly", "decreasing_rapidly"] and trends.get("soil_moisture_start") is not None:
+        has_concerning_trends = True
+        moisture_start = trends["soil_moisture_start"]
+        moisture_end = trends["soil_moisture_end"]
+        moisture_change = trends["soil_moisture_change"]
+        moisture_period = trends["soil_moisture_period_hours"]
+        
+        # More aggressive adjustment for very rapid drops
+        if trends["soil_moisture_trend"] == "decreasing_very_rapidly":
+            moisture_adjustment = min(abs(moisture_change) * 2.0, 0.20)
+        else:
+            moisture_adjustment = min(abs(moisture_change) * 1.5, 0.15)
+        recommended_soil_moisture += moisture_adjustment
+        
+        reasoning.append(f"⚠️ Soil moisture is dropping way faster than normal - from {moisture_start:.2f} to {moisture_end:.2f} ({abs(moisture_change)*100:.1f}% drop) over just {moisture_period:.1f} hours. This indicates the plant is losing water much faster than expected. Increasing threshold by {moisture_adjustment:.2f} proactively to ensure water is available before the plant shows signs of dehydration (plants need 15-30 minutes to absorb moisture).")
+        trends_detected.append("soil_moisture_decreasing_rapidly")
+        confidence = "high"
+    
+    # Only add recommendation if there are concerning trends
+    if has_concerning_trends:
+        # Ensure within bounds
+        recommended_soil_moisture = max(metrics["soilMoisture"]["min"], min(recommended_soil_moisture, metrics["soilMoisture"]["max"]))
+        
+        recommendations.append(ThresholdRecommendation(
+            actuator="pump",
+            currentThreshold=current_thresholds.get("soilMoisture"),
+            recommendedThreshold=round(recommended_soil_moisture, 3),
+            reasoning=reasoning,
+            confidence=confidence,
+            trends=trends_detected
+        ))
+    
+    # FAN (temperatureC) recommendation - only for SHARP temperature increases
+    if trends["temperature_trend"] in ["increasing_very_rapidly", "increasing_rapidly"] and trends.get("temperature_start") is not None:
+        recommended_temperature = base_temperature
+        reasoning = []
+        trends_detected = []
+        confidence = "high"
+        
+        temp_start = trends["temperature_start"]
+        temp_end = trends["temperature_end"]
+        temp_period = trends["temperature_period_hours"]
+        temp_rate = trends["temperature_rate"]
+        temp_current = trends.get("temperature_current")
+        
+        if trends["temperature_trend"] == "increasing_rapidly":
+            # Increase fan threshold to maintain cooling
+            temp_adjustment = min(trends["temperature_rate"] * 0.5, 2.0)
+            recommended_temperature += temp_adjustment
+            
+            if temp_current and temp_current > metrics["temperatureC"]["max"]:
+                reasoning.append(f"⚠️ Temperature is very high at {temp_current:.1f}°C, exceeding optimal range. The plant is experiencing heat stress.")
+            else:
+                reasoning.append(f"⚠️ Temperature is rising rapidly from {temp_start:.1f}°C to {temp_end:.1f}°C over {temp_period:.1f} hours (rate: {temp_rate:.1f}°C/hour).")
+            
+            reasoning.append(f"You should adjust fan threshold by {temp_adjustment:.1f}°C to activate cooling earlier and prevent further temperature increase.")
+            trends_detected.append("temperature_increasing_rapidly")
+        else:
+            # Moderate increase
+            temp_adjustment = min(trends["temperature_rate"] * 0.3, 1.0)
+            recommended_temperature += temp_adjustment
+            reasoning.append(f"Temperature is gradually increasing from {temp_start:.1f}°C to {temp_end:.1f}°C. You should adjust fan threshold to maintain optimal conditions.")
+            trends_detected.append("temperature_increasing")
+            confidence = "medium"
+        
+        recommended_temperature = max(metrics["temperatureC"]["min"], min(recommended_temperature, metrics["temperatureC"]["max"]))
+        
+        recommendations.append(ThresholdRecommendation(
+            actuator="fan",
+            currentThreshold=current_thresholds.get("temperatureC"),
+            recommendedThreshold=round(recommended_temperature, 1),
+            reasoning=reasoning,
+            confidence=confidence,
+            trends=trends_detected
+        ))
+    
+    # LIGHTS (lightLux) recommendation - only for SHARP light decreases
+    if trends["light_trend"] in ["decreasing_very_rapidly", "decreasing_rapidly"] and trends.get("light_start") is not None:
+        recommended_light = base_light
+        reasoning = []
+        trends_detected = []
+        confidence = "high"
+        
+        light_start = trends["light_start"]
+        light_end = trends["light_end"]
+        light_change = trends["light_change"]
+        light_period = trends["light_period_hours"]
+        
+        # More aggressive for very rapid drops
+        if trends["light_trend"] == "decreasing_very_rapidly":
+            light_adjustment = (metrics["lightLux"]["max"] - metrics["lightLux"]["min"]) * 0.20
+        else:
+            light_adjustment = (metrics["lightLux"]["max"] - metrics["lightLux"]["min"]) * 0.15
+        recommended_light += light_adjustment
+        
+        reasoning.append(f"⚠️ Light levels are dropping sharply from {light_start:.0f} lux to {light_end:.0f} lux over {light_period:.1f} hours (change: {abs(light_change):.1f}%). Insufficient light reduces photosynthesis immediately.")
+        reasoning.append(f"Increasing light threshold by {light_adjustment:.0f} lux proactively. Since plants need time to adjust to light changes (10-20 minutes for optimal photosynthesis), activating lights earlier ensures the plant receives adequate light before growth is affected.")
+        trends_detected.append("light_decreasing_rapidly")
+        
+        recommended_light = max(metrics["lightLux"]["min"], min(recommended_light, metrics["lightLux"]["max"]))
+        
+        recommendations.append(ThresholdRecommendation(
+            actuator="lights",
+            currentThreshold=current_thresholds.get("lightLux"),
+            recommendedThreshold=round(recommended_light, 0),
+            reasoning=reasoning,
+            confidence=confidence,
+            trends=trends_detected
+        ))
+    
+    return recommendations
+
+
+@app.get("/devices/{device_id}/threshold-recommendations", response_model=ThresholdRecommendationResponse)
+def get_threshold_recommendations(
+    device_id: str,
+    timeWindow: int = Query(24, ge=1, le=168, description="Time window in hours to analyze"),
+    plantType: Optional[str] = Query(None, description="Plant type (if not provided, fetched from device config, defaults to 'basil')")
+) -> ThresholdRecommendationResponse:
+    """Get threshold recommendations for a device based on plant type and telemetry trends."""
+    logger = logging.getLogger(__name__)
+    
+    # Get device config (plant type, current thresholds)
+    config = _get_device_config(device_id)
+    device_plant_type = plantType or config.get("plantType") or "basil"
+    
+    # Validate plant type
+    if device_plant_type.lower() not in PLANT_TYPE_METRICS:
+        logger.warning("Invalid plant type '%s' for device '%s', defaulting to 'basil'", device_plant_type, device_id)
+        device_plant_type = "basil"
+    
+    # Fetch telemetry data for the time window
+    end_time = int(time.time())
+    start_time = end_time - (timeWindow * 3600)
+    
+    try:
+        # Query all items for this device (timestamps are stored in ISO format with TS# prefix)
+        # We'll filter by timestamp in memory since DynamoDB stores them as "TS#YYYYMMDDTHHMMSSZ-suffix"
+        response = telemetry_table.query(
+            KeyConditionExpression=Key("deviceId").eq(device_id),
+            Limit=500,
+            ScanIndexForward=False,
+        )
+        items = response.get("Items", [])
+        
+        # Filter items by timestamp range and normalize
+        filtered_items = []
+        for item in items:
+            # Skip CONFIG items
+            if item.get("timestamp") == "CONFIG":
+                continue
+            # Normalize and check if timestamp is within range
+            normalised = _normalise_item(item)
+            item_timestamp = normalised.get("timestamp", 0)
+            if start_time <= item_timestamp <= end_time:
+                filtered_items.append(normalised)
+        
+        # Sort by timestamp
+        filtered_items.sort(key=lambda item: item.get("timestamp", 0))
+        
+        points = [
+            PlantTimeSeriesPoint(
+                timestamp=item.get("timestamp", 0),
+                score=item.get("score"),
+                disease=item.get("disease"),
+                temperatureC=item.get("temperatureC"),
+                humidity=item.get("humidity"),
+                soilMoisture=item.get("soilMoisture"),
+                lightLux=item.get("lightLux"),
+            )
+            for item in filtered_items
+        ]
+    except Exception as e:
+        logger.error("Failed to fetch telemetry data: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch telemetry data")
+    
+    # Analyze trends
+    trends = _analyze_trends(points, timeWindow)
+    
+    # Get current values (latest reading)
+    current_values = {}
+    if points:
+        latest = points[-1]
+        current_values = {
+            "temperatureC": latest.temperature_c,
+            "humidity": latest.humidity,
+            "soilMoisture": latest.soil_moisture,
+            "lightLux": latest.light_lux,
+        }
+    
+    # Calculate recommendations
+    recommendations = _calculate_recommendations(
+        device_plant_type.lower(),
+        trends,
+        current_values,
+        config.get("thresholds", {})
+    )
+    
+    # Determine overall confidence based on data points
+    data_points = len(points)
+    if data_points < 5:
+        # Lower confidence for all recommendations if insufficient data
+        for rec in recommendations:
+            if rec.confidence == "high":
+                rec.confidence = "medium"
+            elif rec.confidence == "medium":
+                rec.confidence = "low"
+    elif data_points < 10:
+        # Medium confidence if moderate data
+        for rec in recommendations:
+            if rec.confidence == "high":
+                rec.confidence = "medium"
+    
+    return ThresholdRecommendationResponse(
+        deviceId=device_id,
+        plantType=device_plant_type,
+        recommendations=recommendations,
+        timeWindowHours=timeWindow,
+        dataPoints=data_points
+    )
 
 
 @app.get("/")

@@ -462,3 +462,90 @@ export async function removeScannedPlantFromBackend(
   }
 }
 
+export type ThresholdRecommendation = {
+  actuator: "pump" | "fan" | "lights";
+  currentThreshold?: number | null;
+  recommendedThreshold: number;
+  reasoning: string[];
+  confidence: "low" | "medium" | "high";
+  trends: string[];
+};
+
+export type ThresholdRecommendationResponse = {
+  deviceId: string;
+  plantType?: string | null;
+  recommendations: ThresholdRecommendation[];
+  timeWindowHours: number;
+  dataPoints: number;
+};
+
+export async function fetchThresholdRecommendations(
+  deviceId: string,
+  timeWindow?: number,
+  plantType?: string
+): Promise<ThresholdRecommendationResponse> {
+  if (USE_MOCK_API) {
+    console.info(`[API Mock] GET /devices/${deviceId}/threshold-recommendations`, { deviceId, timeWindow, plantType });
+    // Mock response with sample recommendations
+    const mockRecommendations: ThresholdRecommendation[] = [
+      {
+        actuator: "pump",
+        currentThreshold: null,
+        recommendedThreshold: 0.72,
+        reasoning: [
+          "Base threshold set to 30% above minimum (0.70) for basil.",
+          "Temperature is increasing rapidly (2.5°C/hour). Increasing soil moisture threshold by 0.08 to ensure plant can absorb water early."
+        ],
+        confidence: "high",
+        trends: ["temperature_increasing_rapidly"]
+      },
+      {
+        actuator: "fan",
+        currentThreshold: null,
+        recommendedThreshold: 23.5,
+        reasoning: [
+          "Base threshold set to 20% above minimum (23.0°C) for basil.",
+          "Temperature is increasing rapidly. Adjusting fan threshold to maintain optimal cooling."
+        ],
+        confidence: "high",
+        trends: ["temperature_increasing_rapidly"]
+      },
+      {
+        actuator: "lights",
+        currentThreshold: null,
+        recommendedThreshold: 13000,
+        reasoning: [
+          "Base threshold set to 30% above minimum (13000 lux) for basil."
+        ],
+        confidence: "medium",
+        trends: []
+      }
+    ];
+    const result: ThresholdRecommendationResponse = {
+      deviceId,
+      plantType: plantType || "basil",
+      recommendations: mockRecommendations,
+      timeWindowHours: timeWindow || 24,
+      dataPoints: 15
+    };
+    console.info(`[API Mock Response] GET /devices/${deviceId}/threshold-recommendations`, { data: result });
+    return result;
+  }
+
+  try {
+    const response = await apiClient.get<ThresholdRecommendationResponse>(
+      `/devices/${deviceId}/threshold-recommendations`,
+      {
+        params: {
+          timeWindow: timeWindow,
+          plantType: plantType
+        }
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error("Failed to fetch threshold recommendations", error);
+    throw error;
+  }
+}
+

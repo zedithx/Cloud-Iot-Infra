@@ -1,6 +1,6 @@
 "use client";
 
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNowSGT } from "@/lib/dateUtils";
 import type { TelemetryRecord } from "@/types/telemetry";
 
 type TelemetryTableProps = {
@@ -82,7 +82,7 @@ export default function TelemetryTable({
                   : "—"}
               </td>
               <td className="px-4 py-3 text-slate-300">
-                {formatDistanceToNow(record.timestamp * 1000, {
+                {formatDistanceToNowSGT(record.timestamp, {
                   addSuffix: true
                 })}
               </td>

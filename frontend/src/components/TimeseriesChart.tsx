@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { format } from "date-fns";
+import { formatTimestampSGT } from "@/lib/dateUtils";
 import type { PlantTimeSeriesPoint } from "@/types/telemetry";
 
 type TimeseriesChartProps = {
@@ -18,10 +18,27 @@ type TimeseriesChartProps = {
 type ChartDatum = PlantTimeSeriesPoint & { label: string };
 
 function formatPoints(points: PlantTimeSeriesPoint[]): ChartDatum[] {
-  return points.map((point) => ({
-    ...point,
-    label: format(point.timestamp * 1000, "MMM d, HH:mm")
-  }));
+  return points.map((point) => {
+    try {
+      return {
+        ...point,
+        label: formatTimestampSGT(point.timestamp, "MMM d, HH:mm")
+      };
+    } catch (error) {
+      // Fallback if formatting fails
+      console.warn("Failed to format point timestamp:", error, point);
+      return {
+        ...point,
+        label: new Date(point.timestamp * 1000).toLocaleString("en-SG", { 
+          timeZone: "Asia/Singapore",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit"
+        })
+      };
+    }
+  });
 }
 
 export default function TimeseriesChart({ points }: TimeseriesChartProps) {

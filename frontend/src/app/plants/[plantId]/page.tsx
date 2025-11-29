@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { format, formatDistanceToNow } from "date-fns";
+import { formatTimestampSGT, formatDistanceToNowSGT } from "@/lib/dateUtils";
 import toast from "react-hot-toast";
 import ControlPanel from "@/components/ControlPanel";
 import TimeseriesChart from "@/components/TimeseriesChart";
@@ -15,7 +15,7 @@ import {
   type PlantMetricRange,
   type PlantProfile
 } from "@/lib/plantProfiles";
-import { setDevicePlantType } from "@/lib/api";
+import { setDevicePlantType, fetchThresholdRecommendations, type ThresholdRecommendationResponse } from "@/lib/api";
 import { getPlantName } from "@/lib/localStorage";
 
 function formatMetric(
@@ -45,15 +45,41 @@ export default function PlantDetailPage() {
   const [lockError, setLockError] = useState<string | null>(null);
   const [lockSuccess, setLockSuccess] = useState<boolean>(false);
   const [recentReadingsTab, setRecentReadingsTab] = useState<"disease" | "metrics">("metrics");
+  const [recommendations, setRecommendations] = useState<ThresholdRecommendationResponse | null>(null);
+  const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
 
   // Get custom plant name from localStorage, fallback to formatted device ID
-  const displayName = useMemo(() => {
+  // Use state to avoid hydration mismatch (localStorage is only available on client)
+  const defaultDisplayName = plantId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const [displayName, setDisplayName] = useState(defaultDisplayName);
+  
+  useEffect(() => {
+    // Update display name from localStorage after mount (client-side only)
     const customName = getPlantName(plantId);
     if (customName) {
-      return customName;
+      setDisplayName(customName);
     }
-    return plantId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   }, [plantId]);
+
+  // Fetch recommendations when plant data is available
+  useEffect(() => {
+    if (!snapshot || isLoading) return;
+    
+    const loadRecommendations = async () => {
+      setIsLoadingRecommendations(true);
+      try {
+        const recs = await fetchThresholdRecommendations(plantId, 24);
+        setRecommendations(recs);
+      } catch (err) {
+        // Silently fail - recommendations are optional
+        console.warn("Failed to load recommendations:", err);
+      } finally {
+        setIsLoadingRecommendations(false);
+      }
+    };
+
+    void loadRecommendations();
+  }, [plantId, snapshot, isLoading]);
 
   const selectedProfile: PlantProfile = useMemo(
     () =>
@@ -118,7 +144,7 @@ export default function PlantDetailPage() {
     }
     return {
       lastSeen: snapshot.lastSeen
-        ? formatDistanceToNow(snapshot.lastSeen * 1000, { addSuffix: true })
+        ? formatDistanceToNowSGT(snapshot.lastSeen, { addSuffix: true })
         : "Unknown",
       statusLabel:
         snapshot.disease === true
@@ -417,10 +443,29 @@ export default function PlantDetailPage() {
               unknown: "No data"
             };
 
+            // Get recommendation for this metric if available
+            const getRecommendationForMetric = (key: string) => {
+              if (!recommendations?.recommendations) return null;
+              
+              const actuatorMap: Record<string, "pump" | "fan" | "lights"> = {
+                soilMoisture: "pump",
+                temperatureC: "fan",
+                lightLux: "lights",
+              };
+              
+              const actuator = actuatorMap[key];
+              if (!actuator) return null;
+              
+              return recommendations.recommendations.find(r => r.actuator === actuator) || null;
+            };
+
+            const recommendation = getRecommendationForMetric(metric.key);
+            const hasRecommendation = recommendation !== null;
+
             return (
               <div
                 key={metric.key}
-                className="flex flex-col gap-3 rounded-3xl bg-white/90 p-4 shadow-inner"
+                className={`flex flex-col gap-3 rounded-3xl bg-white/90 p-4 shadow-inner ${hasRecommendation ? "border-2 border-amber-200" : ""}`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -445,6 +490,72 @@ export default function PlantDetailPage() {
                     {metric.displayValue}
                   </span>
                 </div>
+                
+                {isLoadingRecommendations ? (
+                  <div className="mt-2 rounded-2xl border border-emerald-200 bg-emerald-50/30 p-3">
+                    <p className="text-xs text-emerald-600">Analyzing trends...</p>
+                  </div>
+                ) : hasRecommendation ? (
+                  <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-50/50 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-amber-900">
+                        ⚠️ Threshold Recommendation
+                      </span>
+                      <span className={`rounded-full px-2 py-0.5 text-[0.65rem] font-semibold ${
+                        recommendation.confidence === "high" 
+                          ? "bg-emerald-100 text-emerald-700"
+                          : recommendation.confidence === "medium"
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-amber-100 text-amber-700"
+                      }`}>
+                        {recommendation.confidence === "high" ? "High" : recommendation.confidence === "medium" ? "Medium" : "Low"} Confidence
+                      </span>
+                    </div>
+                    <div className="mb-2 text-xs text-amber-800">
+                      <p className="font-medium mb-1">
+                        Recommended: {
+                          metric.key === "soilMoisture" 
+                            ? `${Math.round(recommendation.recommendedThreshold * 100)}%`
+                            : metric.key === "temperatureC"
+                            ? `${recommendation.recommendedThreshold.toFixed(1)}°C`
+                            : `${Math.round(recommendation.recommendedThreshold).toLocaleString()} lux`
+                        }
+                      </p>
+                      {recommendation.reasoning.length > 0 && (
+                        <p className="text-amber-700 mt-1">
+                          {recommendation.reasoning[0]}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : metric.status === "ideal" ? (
+                  <div className="mt-2 rounded-2xl border border-emerald-200 bg-emerald-50/30 p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-emerald-600" aria-hidden>✅</span>
+                      <p className="text-xs text-emerald-700">
+                        Conditions are stable. No threshold adjustment needed.
+                      </p>
+                    </div>
+                  </div>
+                ) : metric.status === "low" || metric.status === "high" ? (
+                  <div className="mt-2 rounded-2xl border border-blue-200 bg-blue-50/30 p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-blue-600" aria-hidden>ℹ️</span>
+                      <p className="text-xs text-blue-700">
+                        Value is {metric.status === "low" ? "below" : "above"} optimal range, but no alarming trends detected. Your auto-heal system will maintain thresholds.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50/30 p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500" aria-hidden>—</span>
+                      <p className="text-xs text-slate-600">
+                        No data available for trend analysis.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -469,6 +580,7 @@ export default function PlantDetailPage() {
           <div data-aos="fade-up">
             <ControlPanel
               plantId={plantId}
+              plantName={displayName}
               profileLabel={selectedProfile.label}
               currentValues={{
                 soilMoisture: snapshot.soilMoisture,
@@ -535,7 +647,7 @@ export default function PlantDetailPage() {
                       .map((point) => (
                         <tr key={point.timestamp}>
                           <td className="whitespace-nowrap px-2 py-2 sm:px-3">
-                            {format(point.timestamp * 1000, "PPpp")}
+                            {formatTimestampSGT(point.timestamp, "PPpp")}
                           </td>
                           <td className="px-2 py-2 sm:px-3">
                             {formatMetric(point.temperatureC, "°C")}
