@@ -420,18 +420,28 @@ export async function addScannedPlantToBackend(
   plantName: string
 ): Promise<ScannedPlant> {
   if (USE_MOCK_API) {
+    console.info("[API Mock] POST /scanned-plants", { deviceId, plantName });
     // In mock mode, just return the data (localStorage handles it)
     return { deviceId, plantName };
   }
 
   try {
+    console.info("[API] POST /scanned-plants", { deviceId, plantName, baseURL: API_BASE_URL });
     const response = await apiClient.post<ScannedPlant>("/scanned-plants", {
       deviceId,
       plantName,
     });
+    console.info("[API Response] POST /scanned-plants", { status: response.status, data: response.data });
     return response.data;
   } catch (error) {
-    console.error("Failed to add scanned plant to backend", error);
+    console.error("[API Error] Failed to add scanned plant to backend", {
+      error,
+      deviceId,
+      plantName,
+      baseURL: API_BASE_URL,
+      isAxiosError: axios.isAxiosError(error),
+      response: axios.isAxiosError(error) ? error.response : undefined,
+    });
     throw error;
   }
 }

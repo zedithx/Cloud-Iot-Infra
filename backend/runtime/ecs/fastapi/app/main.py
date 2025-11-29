@@ -718,48 +718,59 @@ def add_scanned_plant(plant: ScannedPlantRequest) -> ScannedPlantResponse:
     """
     Add or update a scanned plant.
     Uses deviceId='USER_PLANTS' as partition key and hash(deviceId) as sort key.
+    Note: DynamoDB table expects timestamp as STRING, so we convert the hash to string.
     """
+    logger = logging.getLogger(__name__)
     try:
-        # Convert deviceId to numeric timestamp for sort key
-        timestamp_key = _device_id_to_timestamp(plant.deviceId)
+        logger.info("Adding scanned plant: deviceId=%s, plantName=%s", plant.deviceId, plant.plantName)
+        
+        # Convert deviceId to numeric timestamp for sort key, then to string (DynamoDB expects STRING)
+        timestamp_key_int = _device_id_to_timestamp(plant.deviceId)
+        timestamp_key = str(timestamp_key_int)  # Convert to string for DynamoDB
+        logger.debug("Converted deviceId to timestamp key: %s -> %s (string)", plant.deviceId, timestamp_key)
         
         # Store deviceId and plantName in plantName field with delimiter
         item = {
             "deviceId": "USER_PLANTS",
-            "timestamp": timestamp_key,
+            "timestamp": timestamp_key,  # Must be string per table schema
             "plantName": f"{plant.deviceId}|{plant.plantName}",  # Store both with delimiter
         }
         
+        logger.debug("Putting item to DynamoDB: %s", item)
         telemetry_table.put_item(Item=item)
+        logger.info("Successfully saved scanned plant to DynamoDB")
         
         return ScannedPlantResponse(
             deviceId=plant.deviceId,
             plantName=plant.plantName
         )
     except Exception as e:
-        logger = logging.getLogger(__name__)
-        logger.error("Failed to add scanned plant: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to save scanned plant")
+        logger.error("Failed to add scanned plant: %s", e, exc_info=True)
+        error_detail = f"Failed to save scanned plant: {str(e)}"
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 @app.delete("/scanned-plants/{device_id}", status_code=204)
 def remove_scanned_plant(device_id: str) -> None:
     """
     Remove a scanned plant from the user's list.
+    Note: DynamoDB table expects timestamp as STRING, so we convert the hash to string.
     """
+    logger = logging.getLogger(__name__)
     try:
-        # Convert deviceId to numeric timestamp to find the item
-        timestamp_key = _device_id_to_timestamp(device_id)
+        # Convert deviceId to numeric timestamp, then to string (DynamoDB expects STRING)
+        timestamp_key_int = _device_id_to_timestamp(device_id)
+        timestamp_key = str(timestamp_key_int)  # Convert to string for DynamoDB
         
         telemetry_table.delete_item(
             Key={
                 "deviceId": "USER_PLANTS",
-                "timestamp": timestamp_key,
+                "timestamp": timestamp_key,  # Must be string per table schema
             }
         )
+        logger.info("Successfully removed scanned plant: deviceId=%s", device_id)
     except Exception as e:
-        logger = logging.getLogger(__name__)
-        logger.error("Failed to remove scanned plant: %s", e)
+        logger.error("Failed to remove scanned plant: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to remove scanned plant")
 
 

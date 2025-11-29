@@ -21,7 +21,8 @@ export default function usePlantSnapshots(): UsePlantSnapshotsResult {
     setError(undefined);
     try {
       // Get scanned plants from backend/localStorage (only show scanned plants)
-      const scannedPlants = await getScannedPlants();
+      // Always force refresh to ensure cross-device sync
+      const scannedPlants = await getScannedPlants(true);
       
       if (scannedPlants.length === 0) {
         setPlants([]);
@@ -76,6 +77,21 @@ export default function usePlantSnapshots(): UsePlantSnapshotsResult {
 
   useEffect(() => {
     void load();
+    
+    // Refresh when page becomes visible (user switches back to tab)
+    // This ensures cross-device sync when another device makes changes
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        console.info("[usePlantSnapshots] Page became visible, refreshing plants");
+        void load();
+      }
+    };
+    
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [load]);
 
   return {

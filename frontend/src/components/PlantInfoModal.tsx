@@ -27,10 +27,29 @@ export default function PlantInfoModal({
     const loadPlantData = async () => {
       setIsLoading(true);
       setError(null);
+      const startTime = Date.now();
+      const MIN_LOADING_TIME = 1000; // 1 second minimum
+      
       try {
         const data = await fetchPlantDetail(deviceId);
+        const elapsed = Date.now() - startTime;
+        const remaining = Math.max(0, MIN_LOADING_TIME - elapsed);
+        
+        // Wait for minimum loading time if needed
+        if (remaining > 0) {
+          await new Promise(resolve => setTimeout(resolve, remaining));
+        }
+        
         setPlantData(data);
       } catch (err) {
+        const elapsed = Date.now() - startTime;
+        const remaining = Math.max(0, MIN_LOADING_TIME - elapsed);
+        
+        // Wait for minimum loading time even on error
+        if (remaining > 0) {
+          await new Promise(resolve => setTimeout(resolve, remaining));
+        }
+        
         console.error(`[PlantInfoModal] Error fetching plant detail:`, err);
         const message =
           err instanceof Error ? err.message : String(err);
@@ -86,6 +105,34 @@ export default function PlantInfoModal({
     setNameError(null);
     onConfirm(deviceId, trimmedName);
   };
+
+  if (isLoading && !plantData && !error) {
+    // Show loading screen while fetching plant data
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+        <div className="relative w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="flex flex-col items-center gap-6 py-8">
+            <div className="relative">
+              <div className="text-6xl animate-bounce" style={{ animationDuration: "1.5s" }}>
+                🌱
+              </div>
+              <div className="absolute -top-2 -right-2 text-3xl animate-pulse" style={{ animationDuration: "2s", animationDelay: "0.5s" }}>
+                ✨
+              </div>
+            </div>
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-lg font-semibold text-emerald-900 animate-pulse">
+                Loading plant data...
+              </p>
+              <p className="text-sm text-emerald-600">
+                Device ID: {deviceId}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
