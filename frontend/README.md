@@ -1,6 +1,6 @@
-## CloudIoT Frontend
+## PlantPulse Frontend
 
-A Next.js 14 + Tailwind CSS dashboard for interacting with the CloudIoT infrastructure.
+A Next.js 14 + Tailwind CSS dashboard for monitoring and controlling your IoT greenhouse.
 
 ### Features
 

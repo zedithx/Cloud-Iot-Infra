@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import toast from "react-hot-toast";
 import { sendActuatorCommand, type ActuatorCommand } from "@/lib/api";
 
 // localStorage key prefix for persisting actuator state
@@ -374,6 +375,10 @@ export default function ControlPanel({
       await sendActuatorCommand(plantId, command);
       setState((prev) => ({ ...prev, [action]: "success" }));
       
+      // Show success notification
+      const displayValue = meta.formatValue(parsedValue);
+      toast.success(`${meta.icon} ${meta.label} activated! Target: ${displayValue} ${meta.unit}`);
+      
       // Start loading state (20 seconds)
       const now = Date.now();
       const loadingKey = getStorageKey(plantId, action, "loading");
@@ -394,11 +399,12 @@ export default function ControlPanel({
       );
     } catch (error) {
       setState((prev) => ({ ...prev, [action]: "error" }));
+      const errorMessage = error instanceof Error ? error.message : "Failed to send command";
       setErrors((prev) => ({
         ...prev,
-        [action]:
-          error instanceof Error ? error.message : "Failed to send command",
+        [action]: errorMessage,
       }));
+      toast.error(`${ACTION_META[action].icon} Failed to activate ${ACTION_META[action].label}: ${errorMessage}`);
       setTimeout(
         () => setState((prev) => ({ ...prev, [action]: "idle" })),
         3000

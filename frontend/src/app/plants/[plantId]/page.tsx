@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { format, formatDistanceToNow } from "date-fns";
+import toast from "react-hot-toast";
 import ControlPanel from "@/components/ControlPanel";
 import TimeseriesChart from "@/components/TimeseriesChart";
 import DiseaseRiskChart from "@/components/DiseaseRiskChart";
@@ -346,13 +347,15 @@ export default function PlantDetailPage() {
                     await setDevicePlantType(plantId, selectedProfileId);
                     setIsLocked(true);
                     setLockSuccess(true);
+                    const profileLabel = PLANT_PROFILES.find(p => p.id === selectedProfileId)?.label || selectedProfileId;
+                    toast.success(`🔒 Plant type locked to "${profileLabel}"`);
                     setTimeout(() => setLockSuccess(false), 3000);
                   } catch (err) {
-                    setLockError(
-                      err instanceof Error
-                        ? err.message
-                        : "Failed to set plant type"
-                    );
+                    const errorMessage = err instanceof Error
+                      ? err.message
+                      : "Failed to set plant type";
+                    setLockError(errorMessage);
+                    toast.error(`Failed to lock plant type: ${errorMessage}`);
                   } finally {
                     setIsSubmitting(false);
                   }

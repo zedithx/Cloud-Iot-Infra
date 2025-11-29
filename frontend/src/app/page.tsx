@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import toast from "react-hot-toast";
 import usePlantSnapshots from "@/hooks/usePlantSnapshots";
 import PlantCard from "@/components/PlantCard";
 import QRScanner from "@/components/QRScanner";
 import PlantInfoModal from "@/components/PlantInfoModal";
 import DeleteConfirmationModal from "@/components/DeleteConfirmationModal";
-import { addScannedPlant, removeScannedPlant } from "@/lib/localStorage";
+import { addScannedPlant, removeScannedPlant, getPlantName } from "@/lib/localStorage";
 
 export default function HomePage() {
   const { plants, isLoading, error, refresh, isMocked } = usePlantSnapshots();
@@ -42,10 +43,12 @@ export default function HomePage() {
       setIsConfirmationOpen(false);
       setScannedDeviceId(null);
       setApiError(null);
+      toast.success(`🌱 Plant "${plantName}" added successfully!`);
       void refresh(); // Refresh the plant list to show the new plant
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to save plant";
       setApiError(`Error saving plant: ${message}`);
+      toast.error(`Failed to add plant: ${message}`);
       console.error("Error saving plant:", err);
     }
   };
@@ -66,9 +69,11 @@ export default function HomePage() {
 
   const handleConfirmDelete = () => {
     if (plantToDelete) {
+      const plantName = getPlantName(plantToDelete) || plantToDelete.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
       removeScannedPlant(plantToDelete);
       setIsDeleteModalOpen(false);
       setPlantToDelete(null);
+      toast.success(`🗑️ Plant "${plantName}" removed from your list`);
       void refresh(); // Refresh the plant list after removal
     }
   };
@@ -89,24 +94,16 @@ export default function HomePage() {
         <div className="flex flex-wrap items-start justify-between gap-6">
           <div className="max-w-xl space-y-3">
             <p className="text-xs font-semibold uppercase tracking-[0.25em] text-emerald-500 sm:text-sm sm:tracking-[0.35em]">
-              Greenhouse overview
+              PlantPulse
             </p>
             <h1 className="text-3xl font-semibold text-emerald-900 sm:text-4xl md:text-5xl">
               Plant vitality dashboard
             </h1>
             <p className="text-sm text-emerald-700 sm:text-base">
-              Monitor each plant&apos;s health, moisture, and disease risk in real
+              PlantPulse helps you monitor each plant&apos;s health, moisture, and disease risk in real
               time. Tap a plant card to open detailed charts, recent activity,
-              and the simulated control panel for lights, water, and airflow.
+              and the control panel for lights, water, and airflow.
             </p>
-            <div className="flex flex-wrap gap-2 text-[0.7rem] font-semibold text-emerald-600 sm:text-xs">
-              <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1">
-                🌼 Cartoon greenhouse aesthetic
-              </span>
-              <span className="inline-flex items-center gap-2 rounded-full bg-bloom-50 px-3 py-1">
-                🌿 Real-time vitals (mock enabled)
-              </span>
-            </div>
           </div>
           <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
             {isMocked && (
