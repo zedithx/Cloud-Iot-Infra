@@ -26,7 +26,7 @@ backend/
 │      ├─ api/                  # ECS/ALB/API Gateway wiring
 │      ├─ data/                 # DynamoDB and shared data policies
 │      ├─ iot/                  # IoT Core + ingest Lambda
-│      ├─ ml/                   # SageMaker + inference Lambda
+│      ├─ ml/                   # SageMaker + batch transform
 │      ├─ networking/           # VPC and security groups
 │      ├─ scheduling/           # EventBridge scheduler
 │      ├─ notifications.py
@@ -34,7 +34,6 @@ backend/
 ├─ runtime/                     # Artifacts deployed by the infrastructure
 │  ├─ lambdas/                  # Each function packaged independently
 │  │   ├─ capture_scheduler/
-│  │   ├─ inference/
 │  │   ├─ stream_processor/
 │  │   ├─ batch_launcher/
 │  │   ├─ batch_results_processor/
@@ -109,7 +108,7 @@ The FastAPI service now exposes plant-centric endpoints used by the dashboard:
    - Update `fastapi_image_uri` in `infra/config/app_context.py` (or supply via `cdk -c config='{"fastapi_image_uri":"..."}'`).
 
 2. **IoT / Data pipeline Lambdas**
-   - Review `runtime/lambdas/stream_processor`, `runtime/lambdas/batch_launcher`, `runtime/lambdas/batch_results_processor`, `runtime/lambdas/metrics_evaluator`, `runtime/lambdas/inference` (if re-enabled), and `runtime/lambdas/capture_scheduler`; replace placeholder logic with production-ready code.
+   - Review `runtime/lambdas/stream_processor`, `runtime/lambdas/batch_launcher`, `runtime/lambdas/batch_results_processor`, `runtime/lambdas/metrics_evaluator`, and `runtime/lambdas/capture_scheduler`; replace placeholder logic with production-ready code.
 
 3. **Alerting & environment variables**
    - Set `alert_email`, `ses_from_email`, and `ses_to_email` in `infra/config/app_context.py` (or via CDK context overrides).
