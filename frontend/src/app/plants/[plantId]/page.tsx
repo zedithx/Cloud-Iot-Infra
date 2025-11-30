@@ -685,7 +685,7 @@ export default function PlantDetailPage() {
                         .map((point) => (
                           <tr key={point.timestamp}>
                             <td className="whitespace-nowrap px-2 py-2 sm:px-3">
-                              {format(point.timestamp * 1000, "PPpp")}
+                              {formatTimestampSGT(point.timestamp, "PPpp")}
                             </td>
                             <td className="px-2 py-2 sm:px-3">
                               {point.score !== undefined && point.score !== null
