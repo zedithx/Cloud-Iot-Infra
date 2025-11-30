@@ -28,12 +28,14 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     photo_prefix = os.environ.get("PHOTO_PREFIX", "photos")
     presigned_url_expiry = int(os.environ.get("PRESIGNED_URL_EXPIRY", "3600"))  # Default 1 hour
 
+    # Generate shared hourly timestamp for all devices in this capture batch
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H")
+
     # Publish photo capture command with presigned URL to each device
     sent_count = 0
     for device_id in device_ids:
-        # Generate S3 key with timestamp
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        s3_key = f"{photo_prefix}/{device_id}/{timestamp}.jpg"
+        # Generate S3 key with shared timestamp: photos/{timestamp}/{device_id}.jpg
+        s3_key = f"{photo_prefix}/{timestamp}/{device_id}.jpg"
 
         # Generate presigned URL for PUT operation
         try:

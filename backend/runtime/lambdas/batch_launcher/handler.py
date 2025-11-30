@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 import boto3
@@ -16,10 +16,17 @@ STAGE = os.environ["STAGE"]
 
 
 def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # Calculate previous hour timestamp (scheduler runs at :00, batch runs at :05)
+    # This ensures we process photos from the hour that just completed
+    previous_hour = datetime.now(timezone.utc) - timedelta(hours=1)
+    photo_timestamp = previous_hour.strftime("%Y%m%dT%H")
+    
+    # Job creation timestamp for output organization
+    job_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-    input_prefix = "photos/"
-    output_prefix = f"{STAGE}/{timestamp}/"
+    # Process photos from the specific hourly folder
+    input_prefix = f"photos/{photo_timestamp}/"
+    output_prefix = f"{STAGE}/{job_timestamp}/"
 
     transform_job_name = f"{STAGE}-leaf-batch-{int(time.time())}"
 
