@@ -42,6 +42,7 @@ class TelemetryPayload(BaseModel):
     humidity: Optional[float] = Field(None, ge=0.0, le=100.0)
     soil_moisture: Optional[float] = Field(None, alias="soilMoisture", ge=0.0, le=1.0)
     light_lux: Optional[float] = Field(None, alias="lightLux", ge=0.0)
+    water_tank_empty: Optional[int] = Field(None, alias="waterTankEmpty", ge=0, le=1, description="0 = tank has water, 1 = tank is empty")
     disease: Optional[bool] = Field(
         None,
         description="If omitted, derived from score >= DISEASE_THRESHOLD.",
@@ -86,6 +87,7 @@ class PlantSnapshot(BaseModel):
     humidity: Optional[float]
     soil_moisture: Optional[float] = Field(None, alias="soilMoisture")
     light_lux: Optional[float] = Field(None, alias="lightLux")
+    water_tank_empty: Optional[int] = Field(None, alias="waterTankEmpty", ge=0, le=1)
     notes: Optional[str]
 
     class Config:
@@ -100,6 +102,7 @@ class PlantTimeSeriesPoint(BaseModel):
     humidity: Optional[float]
     soil_moisture: Optional[float] = Field(None, alias="soilMoisture")
     light_lux: Optional[float] = Field(None, alias="lightLux")
+    water_tank_empty: Optional[int] = Field(None, alias="waterTankEmpty", ge=0, le=1)
 
 
 class PlantTimeSeriesResponse(BaseModel):
@@ -119,11 +122,13 @@ class ActuatorCommand(BaseModel):
 class ScannedPlantRequest(BaseModel):
     deviceId: str = Field(..., alias="deviceId")
     plantName: str = Field(..., alias="plantName", min_length=1, max_length=50)
+    plantType: Optional[str] = Field(None, alias="plantType")
 
 
 class ScannedPlantResponse(BaseModel):
     deviceId: str = Field(..., alias="deviceId")
     plantName: str = Field(..., alias="plantName")
+    plantType: Optional[str] = Field(None, alias="plantType")
 
     class Config:
         populate_by_name = True
@@ -271,6 +276,19 @@ def _normalise_item(item: Dict[str, Any]) -> Dict[str, Any]:
     # Extract metrics from the metrics map if it exists
     metrics = data.get("metrics", {})
     if isinstance(metrics, dict):
+        # Handle waterTankFilled -> waterTankEmpty conversion BEFORE flattening (invert logic)
+        # waterTankFilled: 1 = filled, 0 = not filled
+        # waterTankEmpty: 1 = empty, 0 = full (has water)
+        if "waterTankFilled" in metrics:
+            water_tank_filled = metrics.get("waterTankFilled")
+            if water_tank_filled is not None:
+                # Convert: filled=1 -> empty=0, not filled=0 -> empty=1
+                try:
+                    filled_value = float(water_tank_filled)
+                    metrics["waterTankEmpty"] = 0 if filled_value == 1 else 1
+                except (ValueError, TypeError):
+                    pass
+        
         # Flatten metrics to top level for API compatibility
         for key, value in metrics.items():
             if key not in data:  # Don't overwrite existing top-level fields
@@ -452,6 +470,7 @@ def list_plants() -> List[PlantSnapshot]:
                 humidity=merged.get("humidity"),
                 soilMoisture=merged.get("soilMoisture"),
                 lightLux=merged.get("lightLux"),
+                waterTankEmpty=merged.get("waterTankEmpty"),
                 notes=merged.get("notes"),
         )
         )
@@ -479,6 +498,7 @@ def plant_detail(plant_id: str) -> PlantSnapshot:
         humidity=item.get("humidity"),
         soilMoisture=item.get("soilMoisture"),
         lightLux=item.get("lightLux"),
+        waterTankEmpty=item.get("waterTankEmpty"),
         notes=item.get("notes"),
     )
 
@@ -724,9 +744,11 @@ def get_scanned_plants() -> List[ScannedPlantResponse]:
                 if len(parts) == 2:
                     actual_device_id = parts[0]
                     plant_name = parts[1]
+                    plant_type = item.get("plantType")
                     plants.append(ScannedPlantResponse(
                         deviceId=actual_device_id,
-                        plantName=plant_name
+                        plantName=plant_name,
+                        plantType=plant_type
                     ))
         
         return plants
@@ -745,12 +767,27 @@ def add_scanned_plant(plant: ScannedPlantRequest) -> ScannedPlantResponse:
     """
     logger = logging.getLogger(__name__)
     try:
-        logger.info("Adding scanned plant: deviceId=%s, plantName=%s", plant.deviceId, plant.plantName)
+        logger.info("Adding/updating scanned plant: deviceId=%s, plantName=%s, plantType=%s", 
+                    plant.deviceId, plant.plantName, plant.plantType)
         
         # Convert deviceId to numeric timestamp for sort key, then to string (DynamoDB expects STRING)
         timestamp_key_int = _device_id_to_timestamp(plant.deviceId)
         timestamp_key = str(timestamp_key_int)  # Convert to string for DynamoDB
         logger.debug("Converted deviceId to timestamp key: %s -> %s (string)", plant.deviceId, timestamp_key)
+        
+        # Check if item already exists
+        try:
+            existing = telemetry_table.get_item(
+                Key={
+                    "deviceId": "USER_PLANTS",
+                    "timestamp": timestamp_key
+                }
+            )
+            is_update = "Item" in existing
+            logger.info("Item %s for deviceId=%s", "exists (updating)" if is_update else "does not exist (creating)", plant.deviceId)
+        except Exception as e:
+            logger.warning("Could not check for existing item: %s", e)
+            is_update = False
         
         # Store deviceId and plantName in plantName field with delimiter
         item = {
@@ -759,13 +796,22 @@ def add_scanned_plant(plant: ScannedPlantRequest) -> ScannedPlantResponse:
             "plantName": f"{plant.deviceId}|{plant.plantName}",  # Store both with delimiter
         }
         
-        logger.debug("Putting item to DynamoDB: %s", item)
+        # Always include plantType if provided (even if empty string, but not if None)
+        # If plantType is None, we don't include it, which means it won't be updated/cleared
+        # To properly clear plantType, we'd need to use update_item with REMOVE, but for now
+        # we'll only update it if a new value is provided
+        if plant.plantType is not None and plant.plantType != "":
+            item["plantType"] = plant.plantType
+        
+        logger.debug("Putting item to DynamoDB (will %s): %s", "update" if is_update else "create", item)
+        # put_item will update if the item exists (same partition + sort key), or create if it doesn't
         telemetry_table.put_item(Item=item)
         logger.info("Successfully saved scanned plant to DynamoDB")
         
         return ScannedPlantResponse(
             deviceId=plant.deviceId,
-            plantName=plant.plantName
+            plantName=plant.plantName,
+            plantType=plant.plantType
         )
     except Exception as e:
         logger.error("Failed to add scanned plant: %s", e, exc_info=True)
@@ -778,12 +824,17 @@ def remove_scanned_plant(device_id: str) -> None:
     """
     Remove a scanned plant from the user's list.
     Note: DynamoDB table expects timestamp as STRING, so we convert the hash to string.
+    FastAPI automatically URL-decodes path parameters.
     """
     logger = logging.getLogger(__name__)
     try:
+        # FastAPI automatically URL-decodes the device_id from the path
+        logger.info("Removing scanned plant: deviceId=%s", device_id)
+        
         # Convert deviceId to numeric timestamp, then to string (DynamoDB expects STRING)
         timestamp_key_int = _device_id_to_timestamp(device_id)
         timestamp_key = str(timestamp_key_int)  # Convert to string for DynamoDB
+        logger.debug("Converted deviceId to timestamp key: %s -> %s (string)", device_id, timestamp_key)
         
         telemetry_table.delete_item(
             Key={

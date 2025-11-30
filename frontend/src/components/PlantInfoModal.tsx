@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { fetchPlantDetail } from "@/lib/api";
-import { getScannedPlants } from "@/lib/localStorage";
+import { getScannedPlants, getPlantType } from "@/lib/localStorage";
+import { PLANT_PROFILES, guessProfileId } from "@/lib/plantProfiles";
 import type { PlantSnapshot } from "@/types/telemetry";
 
 type PlantInfoModalProps = {
   deviceId: string;
-  onConfirm: (deviceId: string, plantName: string) => void;
+  onConfirm: (deviceId: string, plantName: string, plantType?: string | null) => void;
   onCancel: () => void;
 };
 
@@ -22,6 +23,7 @@ export default function PlantInfoModal({
   const [plantName, setPlantName] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
   const [isDuplicate, setIsDuplicate] = useState(false);
+  const [selectedPlantType, setSelectedPlantType] = useState<string>("");
 
   useEffect(() => {
     const loadPlantData = async () => {
@@ -80,9 +82,23 @@ export default function PlantInfoModal({
         if (existing) {
           setIsDuplicate(true);
           setPlantName(existing.plantName);
+          if (existing.plantType) {
+            setSelectedPlantType(existing.plantType);
+          }
+        } else {
+          // Try to guess plant type from device ID
+          const guessedType = guessProfileId(deviceId);
+          if (guessedType) {
+            setSelectedPlantType(guessedType);
+          } else {
+            // Default to first profile
+            setSelectedPlantType(PLANT_PROFILES[0].id);
+          }
         }
       } catch (err) {
         console.error("Failed to check for duplicate:", err);
+        // Default to first profile on error
+        setSelectedPlantType(PLANT_PROFILES[0].id);
       }
     };
     void checkDuplicate();
@@ -103,7 +119,7 @@ export default function PlantInfoModal({
       return;
     }
     setNameError(null);
-    onConfirm(deviceId, trimmedName);
+    onConfirm(deviceId, trimmedName, selectedPlantType || null);
   };
 
   if (isLoading && !plantData && !error) {
@@ -267,6 +283,30 @@ export default function PlantInfoModal({
             )}
             <p className="mt-1 text-xs text-emerald-600">
               {plantName.length}/50 characters
+            </p>
+          </div>
+
+          <div>
+            <label
+              htmlFor="plant-type"
+              className="block text-sm font-medium text-emerald-700 mb-1"
+            >
+              Plant Type
+            </label>
+            <select
+              id="plant-type"
+              value={selectedPlantType}
+              onChange={(e) => setSelectedPlantType(e.target.value)}
+              className="w-full rounded-2xl border border-emerald-200 bg-white px-4 py-2 text-emerald-900 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            >
+              {PLANT_PROFILES.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-emerald-600">
+              Select the type of plant for optimal monitoring
             </p>
           </div>
 

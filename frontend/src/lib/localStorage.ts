@@ -26,7 +26,9 @@ export async function getScannedPlants(forceRefresh: boolean = true): Promise<Sc
       if (typeof window !== "undefined") {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(backendPlants));
         localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
-        console.info("[getScannedPlants] Synced %d plants from backend to localStorage", backendPlants.length);
+        console.info("[getScannedPlants] Synced %d plants from backend to localStorage: %s", 
+                     backendPlants.length, 
+                     backendPlants.map(p => p.deviceId).join(", ") || "none");
       }
       return backendPlants;
     } catch (error) {
@@ -57,15 +59,16 @@ export async function getScannedPlants(forceRefresh: boolean = true): Promise<Sc
  * Adds or updates a scanned plant in backend and localStorage.
  * @param deviceId - The device ID from the QR code
  * @param plantName - The custom name for the plant
+ * @param plantType - Optional plant type (e.g., "basil", "strawberry")
  */
-export async function addScannedPlant(deviceId: string, plantName: string): Promise<void> {
-  const newPlant: ScannedPlant = { deviceId, plantName };
+export async function addScannedPlant(deviceId: string, plantName: string, plantType?: string | null): Promise<void> {
+  const newPlant: ScannedPlant = { deviceId, plantName, plantType: plantType || null };
   
   // Save to backend first (unless mock mode)
   if (!isMockApiEnabled()) {
     try {
-      await addScannedPlantToBackend(deviceId, plantName);
-      console.info("Successfully saved plant to backend:", { deviceId, plantName });
+      await addScannedPlantToBackend(deviceId, plantName, plantType);
+      console.info("Successfully saved plant to backend:", { deviceId, plantName, plantType });
     } catch (error) {
       console.error("Failed to save to backend, saving to localStorage only:", error);
       // Continue to save to localStorage as fallback
@@ -101,7 +104,7 @@ export async function addScannedPlant(deviceId: string, plantName: string): Prom
     
     // Save back to localStorage
     localStorage.setItem(STORAGE_KEY, JSON.stringify(plants));
-    console.info("Successfully saved plant to localStorage:", { deviceId, plantName });
+    console.info("Successfully saved plant to localStorage:", { deviceId, plantName, plantType });
   } catch (error) {
     console.error("Failed to save scanned plant to localStorage:", error);
     throw error;
@@ -121,12 +124,14 @@ export async function removeScannedPlant(deviceId: string): Promise<void> {
       
       // After successful backend removal, refresh from backend to ensure sync
       // This ensures localStorage matches backend state
+      // Add a small delay to ensure backend has processed the deletion
+      await new Promise(resolve => setTimeout(resolve, 200));
       try {
         const updatedPlants = await fetchScannedPlants();
         if (typeof window !== "undefined") {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedPlants));
           localStorage.setItem(LAST_SYNC_KEY, Date.now().toString());
-          console.info("Synced updated plant list from backend after deletion");
+          console.info("Synced updated plant list from backend after deletion: %d plants", updatedPlants.length);
         }
         return; // Successfully synced from backend, no need to update localStorage manually
       } catch (syncError) {
@@ -191,3 +196,25 @@ export function getPlantName(deviceId: string): string | null {
   }
 }
 
+/**
+ * Gets the plant type for a device ID (synchronous, from localStorage cache).
+ * @param deviceId - The device ID to look up
+ * @returns The plant type, or null if not found
+ */
+export function getPlantType(deviceId: string): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) {
+      return null;
+    }
+    const plants = JSON.parse(stored) as ScannedPlant[];
+    const plant = plants.find((p) => p.deviceId === deviceId);
+    return plant?.plantType ?? null;
+  } catch (error) {
+    console.error("Failed to read plant type from localStorage:", error);
+    return null;
+  }
+}
