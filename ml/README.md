@@ -39,8 +39,8 @@ diseased.jpg -> Diseased
 
 1. Package the model:
 ```
-cd ml
-tar -czvf model.tar.gz model/
+cd model
+tar -czvf ../model.tar.gz model.pth inference.py
 ```
 2. Upload model.tar.gz to S3
 3. Deploy via SageMaker PyTorch inference container
