@@ -449,7 +449,7 @@ export default function PlantDetailPage() {
                     <strong>Consider setting up automated alerts</strong> for future low water level events
                   </li>
                   <li>
-                    <strong>Check the irrigation system</strong> to ensure it's operating efficiently
+                    <strong>Check the irrigation system</strong> to ensure it&apos;s operating efficiently
                   </li>
                 </ul>
               </div>

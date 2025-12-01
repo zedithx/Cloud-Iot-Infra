@@ -1,18 +1,43 @@
 #!/usr/bin/env python3
 """
-Send IoT Core messages for multiple devices to create telemetry records in DynamoDB.
+Send IoT Core messages for testing different metric threshold scenarios.
 
 This script publishes messages directly to AWS IoT Core, which will trigger
 the Lambda function to store records in DynamoDB.
 
 Usage:
+    # Normal telemetry
     python scripts/send_iotcore_messages.py
+    
+    # Test low temperature threshold
+    python scripts/send_iotcore_messages.py --low-temperature
+    
+    # Test low soil moisture threshold
+    python scripts/send_iotcore_messages.py --low-moisture
+    
+    # Test water tank empty
+    python scripts/send_iotcore_messages.py --water-tank-empty
+    
+    # Test multiple scenarios
+    python scripts/send_iotcore_messages.py --low-temperature --low-humidity --device-id rpi-01 --count 5
+
+Flags:
+    --low-temperature    Send temperature below threshold (~15°C)
+    --low-humidity       Send humidity below threshold (~30%)
+    --low-moisture       Send soil moisture below threshold (~0.2)
+    --low-light          Send light below threshold (~5000 lux)
+    --high-temperature   Send high temperature for trend testing (~35°C)
+    --high-humidity      Send high humidity for trend testing (~90%)
+    --water-tank-empty   Send waterTankEmpty=1 (tank is empty)
+    --device-id ID       Specify device ID (default: rpi-01)
+    --count N            Number of messages to send (default: 1)
 
 Environment variables:
     AWS_REGION - AWS region (default: ap-southeast-1)
     AWS_PROFILE - AWS profile to use (optional)
 """
 
+import argparse
 import json
 import os
 import random
@@ -56,25 +81,155 @@ def publish_telemetry_message(
         raise
 
 
-def generate_telemetry_data(device_id: str, base_temp: float = 25.0) -> dict:
-    """Generate realistic telemetry data for a device."""
-    # Add some variation to make it realistic
-    temp_variation = random.uniform(-2.0, 3.0)
-    humidity_variation = random.uniform(-5.0, 5.0)
-    moisture_variation = random.uniform(-0.1, 0.1)
-    light_variation = random.uniform(-500, 1000)
-    
-    return {
+def generate_telemetry_data(
+    device_id: str,
+    base_temp: float = 25.0,
+    low_temp: bool = False,
+    low_humidity: bool = False,
+    low_moisture: bool = False,
+    low_light: bool = False,
+    high_temp: bool = False,
+    high_humidity: bool = False,
+    water_tank_empty: bool = False,
+) -> dict:
+    """Generate telemetry data for a device with optional threshold testing flags."""
+    data = {
         "deviceId": device_id,
-        "temperatureC": round(base_temp + temp_variation, 1),
-        "humidity": round(60.0 + humidity_variation, 1),
-        "soilMoisture": round(0.65 + moisture_variation, 2),
-        "lightLux": round(15000 + light_variation, 0),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    
+    # Temperature
+    if low_temp:
+        # Below threshold: ~15°C (typical threshold might be 18-20°C)
+        data["temperatureC"] = round(random.uniform(12.0, 18.0), 1)
+    elif high_temp:
+        # High temperature for trend testing: ~35°C
+        data["temperatureC"] = round(random.uniform(33.0, 37.0), 1)
+    else:
+        # Normal temperature with variation
+        temp_variation = random.uniform(-2.0, 3.0)
+        data["temperatureC"] = round(base_temp + temp_variation, 1)
+    
+    # Humidity
+    if low_humidity:
+        # Below threshold: ~30% (typical threshold might be 40-50%)
+        data["humidity"] = round(random.uniform(25.0, 35.0), 1)
+    elif high_humidity:
+        # High humidity for trend testing: ~90%
+        data["humidity"] = round(random.uniform(85.0, 95.0), 1)
+    else:
+        # Normal humidity with variation
+        humidity_variation = random.uniform(-5.0, 5.0)
+        data["humidity"] = round(60.0 + humidity_variation, 1)
+    
+    # Soil Moisture
+    if low_moisture:
+        # Below threshold: ~0.2 (typical threshold might be 0.3-0.4)
+        data["soilMoisture"] = round(random.uniform(0.15, 0.25), 2)
+    else:
+        # Normal moisture with variation
+        moisture_variation = random.uniform(-0.1, 0.1)
+        data["soilMoisture"] = round(0.65 + moisture_variation, 2)
+    
+    # Light
+    if low_light:
+        # Below threshold: ~5000 lux (typical threshold might be 8000-10000 lux)
+        data["lightLux"] = round(random.uniform(3000, 6000), 0)
+    else:
+        # Normal light with variation
+        light_variation = random.uniform(-500, 1000)
+        data["lightLux"] = round(15000 + light_variation, 0)
+    
+    # Water Tank Status
+    if water_tank_empty:
+        data["waterTankEmpty"] = 1  # Tank is empty
+    else:
+        data["waterTankEmpty"] = 0  # Tank has water
+    
+    return data
+
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Send IoT Core messages for testing different metric threshold scenarios.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Normal telemetry
+  python scripts/send_iotcore_messages.py
+  
+  # Test low temperature threshold
+  python scripts/send_iotcore_messages.py --low-temperature
+  
+  # Test low soil moisture threshold
+  python scripts/send_iotcore_messages.py --low-moisture
+  
+  # Test water tank empty
+  python scripts/send_iotcore_messages.py --water-tank-empty
+  
+  # Test multiple scenarios with multiple messages
+  python scripts/send_iotcore_messages.py --low-temperature --low-humidity --device-id rpi-01 --count 5
+        """,
+    )
+    
+    # Threshold testing flags
+    parser.add_argument(
+        "--low-temperature",
+        action="store_true",
+        help="Send temperature below threshold (~15°C)",
+    )
+    parser.add_argument(
+        "--low-humidity",
+        action="store_true",
+        help="Send humidity below threshold (~30%%)",
+    )
+    parser.add_argument(
+        "--low-moisture",
+        action="store_true",
+        help="Send soil moisture below threshold (~0.2)",
+    )
+    parser.add_argument(
+        "--low-light",
+        action="store_true",
+        help="Send light below threshold (~5000 lux)",
+    )
+    parser.add_argument(
+        "--high-temperature",
+        action="store_true",
+        help="Send high temperature for trend testing (~35°C)",
+    )
+    parser.add_argument(
+        "--high-humidity",
+        action="store_true",
+        help="Send high humidity for trend testing (~90%%)",
+    )
+    parser.add_argument(
+        "--water-tank-empty",
+        action="store_true",
+        help="Send waterTankEmpty=1 (tank is empty)",
+    )
+    
+    # Device and count options
+    parser.add_argument(
+        "--device-id",
+        type=str,
+        default="rpi-01",
+        help="Device ID to send messages for (default: rpi-01)",
+    )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        help="Number of messages to send (default: 1)",
+    )
+    
+    return parser.parse_args()
 
 
 def main():
+    args = parse_args()
+    
     region = os.getenv("AWS_REGION", "ap-southeast-1")
     profile = os.getenv("AWS_PROFILE")
     
@@ -89,38 +244,55 @@ def main():
     except Exception as e:
         print(f"⚠️  Could not get IoT endpoint (may not be needed): {e}")
     
-    # Define multiple devices with different characteristics
-    devices = [
-        {"id": "rpi-01", "base_temp": 24.0, "name": "Greenhouse Zone 1"},
-        {"id": "rpi-02", "base_temp": 26.0, "name": "Greenhouse Zone 2"},
-        {"id": "rpi-03", "base_temp": 23.0, "name": "Greenhouse Zone 3"},
-        {"id": "sensor-01", "base_temp": 25.5, "name": "Outdoor Sensor 1"},
-        {"id": "sensor-02", "base_temp": 22.0, "name": "Indoor Sensor 1"},
-    ]
+    # Build scenario description
+    scenarios = []
+    if args.low_temperature:
+        scenarios.append("LOW TEMPERATURE")
+    if args.low_humidity:
+        scenarios.append("LOW HUMIDITY")
+    if args.low_moisture:
+        scenarios.append("LOW MOISTURE")
+    if args.low_light:
+        scenarios.append("LOW LIGHT")
+    if args.high_temperature:
+        scenarios.append("HIGH TEMPERATURE (trend)")
+    if args.high_humidity:
+        scenarios.append("HIGH HUMIDITY (trend)")
+    if args.water_tank_empty:
+        scenarios.append("WATER TANK EMPTY")
     
-    print(f"\n🚀 Sending telemetry messages for {len(devices)} devices...\n")
+    scenario_desc = " | ".join(scenarios) if scenarios else "NORMAL"
     
-    # Send messages for each device
-    for device in devices:
-        device_id = device["id"]
-        print(f"📤 Device: {device_id} ({device['name']})")
+    print(f"\n🚀 Sending {args.count} message(s) for device: {args.device_id}")
+    print(f"📋 Scenario: {scenario_desc}\n")
+    
+    # Send messages
+    for i in range(args.count):
+        if i > 0:
+            time.sleep(0.5)  # Stagger messages slightly
         
-        # Send 2-3 messages per device with slight variations
-        num_messages = random.randint(2, 3)
-        for i in range(num_messages):
-            # Stagger messages slightly
-            if i > 0:
-                time.sleep(0.5)
-            
-            telemetry = generate_telemetry_data(device_id, device["base_temp"])
-            publish_telemetry_message(iot_data_client, device_id, telemetry)
-            
-            # Print the data being sent
-            print(f"   └─ {telemetry}")
+        telemetry = generate_telemetry_data(
+            device_id=args.device_id,
+            base_temp=25.0,
+            low_temp=args.low_temperature,
+            low_humidity=args.low_humidity,
+            low_moisture=args.low_moisture,
+            low_light=args.low_light,
+            high_temp=args.high_temperature,
+            high_humidity=args.high_humidity,
+            water_tank_empty=args.water_tank_empty,
+        )
+        
+        publish_telemetry_message(iot_data_client, args.device_id, telemetry)
+        print(f"   [{i+1}/{args.count}] {telemetry}")
     
-    print(f"\n✅ Successfully sent messages for {len(devices)} devices!")
+    print(f"\n✅ Successfully sent {args.count} message(s)!")
     print(f"📊 Check your DynamoDB table to see the new records.")
     print(f"🌐 You can also view them via the API: GET /plants")
+    
+    if scenarios:
+        print(f"\n⚠️  Note: These messages are designed to trigger threshold alerts.")
+        print(f"   Check your metrics evaluator Lambda and SNS notifications.")
 
 
 if __name__ == "__main__":
