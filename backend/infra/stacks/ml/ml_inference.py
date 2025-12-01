@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from aws_cdk import (
     Duration,
+    RemovalPolicy,
     aws_events as events,
     aws_events_targets as targets,
     aws_iam as iam,
@@ -59,7 +60,7 @@ class MlInferenceConstruct(Construct):
             enforce_ssl=True,
             auto_delete_objects=app_context.stage != "prod",
             removal_policy=(
-                s3.RemovalPolicy.RETAIN if app_context.stage == "prod" else s3.RemovalPolicy.DESTROY
+                RemovalPolicy.RETAIN if app_context.stage == "prod" else RemovalPolicy.DESTROY
             ),
         )
 
@@ -79,7 +80,7 @@ class MlInferenceConstruct(Construct):
             enforce_ssl=True,
             auto_delete_objects=app_context.stage != "prod",
             removal_policy=(
-                s3.RemovalPolicy.RETAIN if app_context.stage == "prod" else s3.RemovalPolicy.DESTROY
+                RemovalPolicy.RETAIN if app_context.stage == "prod" else RemovalPolicy.DESTROY
             ),
         )
         model_bucket.grant_read(sagemaker_role)
