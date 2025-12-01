@@ -1,3 +1,4 @@
+from fileinput import filename
 import json
 import logging
 import os
@@ -14,12 +15,23 @@ s3_client = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 
 DYNAMO_TABLE_NAME = os.environ["DYNAMO_TABLE_NAME"]
-TABLE = dynamodb.Table(DYNAMO_TABLE_NAME)
+TABLE = dynamodb.Table(DYNAMO_TABLE_NAME)  # This is probabably telemetry table
 
 DISEASE_READING_TYPE = "disease"
 
 
 def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
+    """
+    Triggered by S3 OBJECT_CREATED event in BatchResultsBucket
+    Reads NDJSON lines containing:
+    {
+      "filename": "device123.jpg",
+      "class_idx": 19,
+      "class_name": "...",
+      "binary_prediction": "...",
+      "confidence": 0.97
+    }
+    """
     records = event.get("Records", [])
     processed = 0
 
@@ -30,13 +42,17 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
             logger.warning("Skipping record without bucket/key: %s", record)
             continue
 
-        lines = _read_object_lines(bucket, key)
-        for payload in lines:
-            device_id = _extract_device_id(payload, key)
-            if not device_id:
-                logger.warning("Unable to determine deviceId for payload %s from %s", payload, key)
+        for prediction in _read_object_lines(bucket, key):
+            filename = prediction.get("filename")
+            binary_prediction = prediction.get("binary_prediction")
+            class_name = prediction.get("class_name")
+            confidence = prediction.get("confidence", 0.0)
+
+            if not filename or not binary_prediction:
+                logger.warning(f"Skipping invalid record: {prediction}")
                 continue
-            disease_score = _extract_score(payload)
+
+            device_id = filename.split(".")[0]  # Assuming filename is {device_id}.jpg
             
             # DynamoDB timestamp with full precision
             dynamo_timestamp = f"DISEASE#{_current_timestamp()}"
@@ -44,12 +60,16 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
                 "deviceId": device_id,
                 "timestamp": dynamo_timestamp,
                 "readingType": DISEASE_READING_TYPE,
-                "metrics": {"diseaseRisk": disease_score},
-                "raw": payload,
+                "metrics": {
+                    "prediction": binary_prediction,
+                    "className": class_name,
+                    "confidence": Decimal(str(confidence)),
+                    "filename": filename,
+                },
+                "raw": prediction,
                 "sourceKey": key,
             }
             TABLE.put_item(Item=item)
-            
             processed += 1
 
     logger.info("Persisted %s disease risk results", processed)
@@ -67,32 +87,6 @@ def _read_object_lines(bucket: str, key: str) -> Iterable[Dict[str, Any]]:
             yield json.loads(line)
         except json.JSONDecodeError:
             logger.exception("Failed to decode JSON line: %s", line)
-
-
-def _extract_device_id(payload: Dict[str, Any], key: str) -> Optional[str]:
-    if "deviceId" in payload:
-        return str(payload["deviceId"])
-    parts = key.split("/")
-    for part in reversed(parts):
-        if part and not part.endswith(".json"):
-            return part
-    return None
-
-
-def _extract_score(payload: Dict[str, Any]) -> Decimal:
-    value = (
-        payload.get("diseaseRisk")
-        or payload.get("score")
-        or payload.get("prediction")
-        or payload.get("probability")
-        or payload.get("risk")
-        or 0
-    )
-    try:
-        return Decimal(str(value))
-    except Exception:  # pylint: disable=broad-exception-caught
-        return Decimal("0")
-
 
 def _current_timestamp() -> str:
     now = datetime.now(timezone.utc)

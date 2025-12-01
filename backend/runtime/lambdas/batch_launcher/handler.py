@@ -63,6 +63,8 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
         "body": json.dumps(
             {
                 "transformJobName": transform_job_name,
+                "inputPrefix": input_prefix,
+                "outputPrefix": output_prefix,
                 "response": _serialize(response),
             }
         ),
