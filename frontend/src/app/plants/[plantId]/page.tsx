@@ -15,8 +15,8 @@ import {
   type PlantMetricRange,
   type PlantProfile
 } from "@/lib/plantProfiles";
-import { setDevicePlantType, fetchThresholdRecommendations, type ThresholdRecommendationResponse } from "@/lib/api";
-import { getPlantName } from "@/lib/localStorage";
+import { fetchThresholdRecommendations, type ThresholdRecommendationResponse } from "@/lib/api";
+import { getPlantName, getPlantType } from "@/lib/localStorage";
 
 function formatMetric(
   value?: number | null,
@@ -37,13 +37,13 @@ export default function PlantDetailPage() {
   const plantId = decodeURIComponent(params.plantId);
   const { snapshot, series, isLoading, error, refresh, isMocked } =
     usePlantDetail(plantId);
+  // Get plant type from localStorage (set during QR scan or edit)
   const [selectedProfileId, setSelectedProfileId] = useState<string>(
-    guessProfileId(plantId) ?? PLANT_PROFILES[0].id
+    () => {
+      const storedType = getPlantType(plantId);
+      return storedType || guessProfileId(plantId) || PLANT_PROFILES[0].id;
+    }
   );
-  const [isLocked, setIsLocked] = useState<boolean>(false);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [lockError, setLockError] = useState<string | null>(null);
-  const [lockSuccess, setLockSuccess] = useState<boolean>(false);
   const [recentReadingsTab, setRecentReadingsTab] = useState<"disease" | "metrics">("metrics");
   const [recommendations, setRecommendations] = useState<ThresholdRecommendationResponse | null>(null);
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
@@ -58,6 +58,12 @@ export default function PlantDetailPage() {
     const customName = getPlantName(plantId);
     if (customName) {
       setDisplayName(customName);
+    }
+    
+    // Update plant type from localStorage
+    const storedType = getPlantType(plantId);
+    if (storedType) {
+      setSelectedProfileId(storedType);
     }
   }, [plantId]);
 
@@ -255,6 +261,9 @@ export default function PlantDetailPage() {
     ];
   }, [recentAverages, selectedProfile, snapshot]);
 
+  // Water tank status (separate from metric comparisons since it's binary)
+  const waterTankStatus = snapshot?.waterTankEmpty ?? null;
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 pb-16 pt-8 sm:px-6 md:gap-10 md:px-12">
       <nav
@@ -296,7 +305,7 @@ export default function PlantDetailPage() {
             Latest reading: <strong>{summary.lastSeen}</strong>
           </p>
         </div>
-        {/* <div className="grid gap-3 text-sm text-emerald-700 min-[460px]:grid-cols-2"> */}
+        <div className="grid gap-3 text-sm text-emerald-700 min-[460px]:grid-cols-2">
           <div className="flex flex-col gap-1.5 rounded-3xl border border-emerald-200 bg-white px-4 py-3">
             <p className="text-[0.65rem] uppercase tracking-[0.28em] text-emerald-500 sm:text-xs">
               Disease risk
@@ -307,18 +316,19 @@ export default function PlantDetailPage() {
                 : "—"}
             </p>
           </div>
-          {/* <div className="flex flex-col gap-1.5 rounded-3xl border border-emerald-200 bg-white px-4 py-3">
+          <div className="flex flex-col gap-1.5 rounded-3xl border border-emerald-200 bg-white px-4 py-3">
             <p className="text-[0.65rem] uppercase tracking-[0.28em] text-emerald-500 sm:text-xs">
-              Soil moisture
+              Water Tank Status
             </p>
-            <p className="text-3xl font-semibold text-emerald-900">
-              {snapshot?.soilMoisture !== undefined &&
-              snapshot?.soilMoisture !== null
-                ? `${Math.round(snapshot.soilMoisture * 100)}%`
-                : "—"}
+            <p className="text-2xl font-semibold text-emerald-900">
+              {waterTankStatus === null
+                ? "—"
+                : waterTankStatus === 1
+                ? "⚠️ Empty"
+                : "✅ Full"}
             </p>
-          </div> */}
-        {/* </div> */}
+          </div>
+        </div>
       </header>
 
       <section
@@ -332,92 +342,22 @@ export default function PlantDetailPage() {
               Recommended growing profile
             </h3>
             <p className="text-xs text-emerald-600 sm:text-sm">
-              Compare live readings against horticulture guidelines for each crop.
-              {isLocked && (
-                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[0.65rem] font-semibold text-emerald-700">
-                  <span aria-hidden>🔒</span> Locked
-                </span>
-              )}
+              Compare live readings against horticulture guidelines for {selectedProfile.label.toLowerCase()}.
             </p>
           </div>
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
-            <label className="flex flex-col gap-2 text-xs font-medium text-emerald-700 sm:w-48 sm:text-sm">
-              Plant type
-              <select
-                value={selectedProfileId}
-                onChange={(event) => {
-                  if (!isLocked) {
-                    setSelectedProfileId(event.target.value);
-                    setLockError(null);
-                    setLockSuccess(false);
-                  }
-                }}
-                disabled={isLocked || isSubmitting}
-                className="rounded-full border border-emerald-200 bg-white px-4 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:bg-emerald-50 disabled:text-emerald-500"
-              >
-                {PLANT_PROFILES.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {!isLocked ? (
-              <button
-                type="button"
-                onClick={async () => {
-                  setIsSubmitting(true);
-                  setLockError(null);
-                  setLockSuccess(false);
-                  try {
-                    await setDevicePlantType(plantId, selectedProfileId);
-                    setIsLocked(true);
-                    setLockSuccess(true);
-                    const profileLabel = PLANT_PROFILES.find(p => p.id === selectedProfileId)?.label || selectedProfileId;
-                    toast.success(`🔒 Plant type locked to "${profileLabel}"`);
-                    setTimeout(() => setLockSuccess(false), 3000);
-                  } catch (err) {
-                    const errorMessage = err instanceof Error
-                      ? err.message
-                      : "Failed to set plant type";
-                    setLockError(errorMessage);
-                    toast.error(`Failed to lock plant type: ${errorMessage}`);
-                  } finally {
-                    setIsSubmitting(false);
-                  }
-                }}
-                disabled={isSubmitting}
-                className="rounded-full border border-emerald-300 bg-emerald-500 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-wait disabled:opacity-50 sm:text-sm"
-              >
-                {isSubmitting ? "Submitting..." : "Lock Selection"}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setIsLocked(false);
-                  setLockError(null);
-                  setLockSuccess(false);
-                }}
-                className="rounded-full border border-amber-300 bg-amber-100 px-4 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-200 sm:text-sm"
-              >
-                Reset
-              </button>
-            )}
+          <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-emerald-600 uppercase tracking-wide">
+                Plant Type
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-900">
+                  {selectedProfile.label}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
-
-        {(lockError || lockSuccess) && (
-          <div
-            className={`rounded-2xl border px-4 py-3 text-xs sm:text-sm ${
-              lockError
-                ? "border-rose-200 bg-rose-50 text-rose-600"
-                : "border-emerald-200 bg-emerald-50 text-emerald-700"
-            }`}
-          >
-            {lockError || "Plant type locked successfully!"}
-          </div>
-        )}
 
         <p className="text-xs text-emerald-600 sm:text-sm">
           {selectedProfile.description}
@@ -635,7 +575,7 @@ export default function PlantDetailPage() {
                       <th className="px-2 py-2 sm:px-3">Time</th>
                       <th className="px-2 py-2 sm:px-3">Temp °C</th>
                       <th className="px-2 py-2 sm:px-3">Humidity %</th>
-                      <th className="px-2 py-2 sm:px-3">Soil</th>
+                      <th className="px-2 py-2 sm:px-3">Moisture %</th>
                       <th className="px-2 py-2 sm:px-3">Light lux</th>
                     </tr>
                   </thead>
@@ -685,7 +625,7 @@ export default function PlantDetailPage() {
                         .map((point) => (
                           <tr key={point.timestamp}>
                             <td className="whitespace-nowrap px-2 py-2 sm:px-3">
-                              {format(point.timestamp * 1000, "PPpp")}
+                              {formatTimestampSGT(point.timestamp, "PPpp")}
                             </td>
                             <td className="px-2 py-2 sm:px-3">
                               {point.score !== undefined && point.score !== null

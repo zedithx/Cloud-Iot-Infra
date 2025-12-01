@@ -65,16 +65,13 @@ class InfrastructureStack(Stack):
             notifications=self.notifications,
         ).resources
         self.ml_inference: Optional[MlInferenceResources] = None
-        self.ml_inference: Optional[MlInferenceResources] = None
         if app_context.config.enable_ml_inference:
-            # Model artifact not ready; keep resources optional to avoid provisioning failure.
-            # self.ml_inference = MlInferenceConstruct(
-            #     self,
-            #     "MlInference",
-            #     app_context=app_context,
-            #     data_plane=self.data_plane,
-            # ).resources
-            pass
+            self.ml_inference = MlInferenceConstruct(
+                self,
+                "MlInference",
+                app_context=app_context,
+                data_plane=self.data_plane,
+            ).resources
         self.api_service: ApiServiceResources = ApiServiceConstruct(
             self,
             "ApiService",

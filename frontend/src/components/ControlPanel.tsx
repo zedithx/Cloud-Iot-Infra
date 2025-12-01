@@ -316,8 +316,18 @@ export default function ControlPanel({
       });
     }
     
+    // Remove duplicates based on value, keeping the first occurrence
+    const uniqueOptions: Array<{ value: string; label: string }> = [];
+    const seenValues = new Set<string>();
+    for (const option of options) {
+      if (!seenValues.has(option.value)) {
+        seenValues.add(option.value);
+        uniqueOptions.push(option);
+      }
+    }
+    
     // Sort by value
-    return options.sort((a, b) => parseFloat(a.value) - parseFloat(b.value));
+    return uniqueOptions.sort((a, b) => parseFloat(a.value) - parseFloat(b.value));
   }
 
   async function trigger(action: ActionKey) {
@@ -506,8 +516,8 @@ export default function ControlPanel({
                         className="w-full rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-500"
                       >
                         <option value="">Select target value...</option>
-                        {generateRangeOptions(currentValue, meta).map((option) => (
-                          <option key={option.value} value={option.value}>
+                        {generateRangeOptions(currentValue, meta).map((option, index) => (
+                          <option key={`${option.value}-${index}`} value={option.value}>
                             {option.label}
                           </option>
                         ))}

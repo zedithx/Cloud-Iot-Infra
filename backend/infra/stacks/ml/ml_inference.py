@@ -137,13 +137,11 @@ class MlInferenceConstruct(Construct):
             log_retention=logs.RetentionDays.ONE_WEEK,
             environment={
                 "DYNAMO_TABLE_NAME": data_plane.telemetry_table.table_name,
-                "PROCESSED_BUCKET": data_plane.processed_assets_bucket.bucket_name,
             },
         )
 
         batch_results_bucket.grant_read(results_processor)
         data_plane.telemetry_table.grant_read_write_data(results_processor)
-        data_plane.processed_assets_bucket.grant_write(results_processor)
 
         batch_results_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,

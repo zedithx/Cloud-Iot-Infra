@@ -398,6 +398,7 @@ export async function setDevicePlantType(
 export type ScannedPlant = {
   deviceId: string;
   plantName: string;
+  plantType?: string | null;
 };
 
 export async function fetchScannedPlants(): Promise<ScannedPlant[]> {
@@ -407,7 +408,11 @@ export async function fetchScannedPlants(): Promise<ScannedPlant[]> {
   }
 
   try {
-    const response = await apiClient.get<ScannedPlant[]>("/scanned-plants");
+    // Add cache-busting timestamp to ensure fresh data
+    const response = await apiClient.get<ScannedPlant[]>("/scanned-plants", {
+      params: { _t: Date.now() }
+    });
+    console.info("[API Response] GET /scanned-plants", { status: response.status, count: response.data.length });
     return response.data;
   } catch (error) {
     console.error("Failed to fetch scanned plants", error);
@@ -417,12 +422,13 @@ export async function fetchScannedPlants(): Promise<ScannedPlant[]> {
 
 export async function addScannedPlantToBackend(
   deviceId: string,
-  plantName: string
+  plantName: string,
+  plantType?: string | null
 ): Promise<ScannedPlant> {
   if (USE_MOCK_API) {
-    console.info("[API Mock] POST /scanned-plants", { deviceId, plantName });
+    console.info("[API Mock] POST /scanned-plants", { deviceId, plantName, plantType });
     // In mock mode, just return the data (localStorage handles it)
-    return { deviceId, plantName };
+    return { deviceId, plantName, plantType: plantType || null };
   }
 
   try {
@@ -430,6 +436,7 @@ export async function addScannedPlantToBackend(
     const response = await apiClient.post<ScannedPlant>("/scanned-plants", {
       deviceId,
       plantName,
+      plantType: plantType || null,
     });
     console.info("[API Response] POST /scanned-plants", { status: response.status, data: response.data });
     return response.data;
@@ -455,7 +462,11 @@ export async function removeScannedPlantFromBackend(
   }
 
   try {
-    await apiClient.delete(`/scanned-plants/${deviceId}`);
+    // URL encode the deviceId to handle special characters
+    const encodedDeviceId = encodeURIComponent(deviceId);
+    console.info("[API] DELETE /scanned-plants", { deviceId, encodedDeviceId, baseURL: API_BASE_URL });
+    await apiClient.delete(`/scanned-plants/${encodedDeviceId}`);
+    console.info("[API Response] DELETE /scanned-plants", { deviceId });
   } catch (error) {
     console.error("Failed to remove scanned plant from backend", error);
     throw error;

@@ -30,6 +30,7 @@ export type PlantSnapshot = {
   humidity?: number | null;
   soilMoisture?: number | null;
   lightLux?: number | null;
+  waterTankEmpty?: number | null;
   notes?: string | null;
 };
 
@@ -41,6 +42,7 @@ export type PlantTimeSeriesPoint = {
   humidity?: number | null;
   soilMoisture?: number | null;
   lightLux?: number | null;
+  waterTankEmpty?: number | null;
 };
 
 export type PlantTimeSeries = {

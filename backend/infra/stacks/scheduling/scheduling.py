@@ -99,6 +99,8 @@ class SchedulingConstruct(Construct):
                 "SNS_TOPIC_ARN": notifications.alert_topic.topic_arn,
                 "DEFAULT_THRESHOLD": str(app_context.config.alert_threshold),
                 "ENV_WINDOW_MINUTES": "30",
+                "AUTOHEAL_CHECK_MINUTES": "60",  # Check last 60 minutes for auto-heal failure
+                "TREND_WINDOW_HOURS": "3",  # 3 hours for trend analysis
             },
         )
 

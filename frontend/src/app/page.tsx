@@ -6,6 +6,7 @@ import usePlantSnapshots from "@/hooks/usePlantSnapshots";
 import PlantCard from "@/components/PlantCard";
 import QRScanner from "@/components/QRScanner";
 import PlantInfoModal from "@/components/PlantInfoModal";
+import EditPlantModal from "@/components/EditPlantModal";
 import DeleteConfirmationModal from "@/components/DeleteConfirmationModal";
 import { addScannedPlant, removeScannedPlant, getPlantName } from "@/lib/localStorage";
 
@@ -17,6 +18,8 @@ export default function HomePage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [plantToDelete, setPlantToDelete] = useState<string | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [plantToEdit, setPlantToEdit] = useState<string | null>(null);
 
   const handleScanSuccess = useCallback((deviceId: string) => {
     if (!deviceId || deviceId.trim().length === 0) {
@@ -37,9 +40,9 @@ export default function HomePage() {
     }, 150);
   }, []);
 
-  const handleConfirm = async (deviceId: string, plantName: string) => {
+  const handleConfirm = async (deviceId: string, plantName: string, plantType?: string | null) => {
     try {
-      await addScannedPlant(deviceId, plantName);
+      await addScannedPlant(deviceId, plantName, plantType);
       setIsConfirmationOpen(false);
       setScannedDeviceId(null);
       setApiError(null);
@@ -71,11 +74,15 @@ export default function HomePage() {
     if (plantToDelete) {
       try {
         const plantName = getPlantName(plantToDelete) || plantToDelete.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        console.info("[handleConfirmDelete] Removing plant:", plantToDelete);
         await removeScannedPlant(plantToDelete);
+        console.info("[handleConfirmDelete] Plant removed, refreshing list...");
         setIsDeleteModalOpen(false);
         setPlantToDelete(null);
         toast.success(`🗑️ Plant "${plantName}" removed from your list`);
-        void refresh(); // Refresh the plant list after removal
+        // Refresh immediately - removeScannedPlant already synced localStorage
+        await refresh();
+        console.info("[handleConfirmDelete] List refreshed");
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to remove plant";
         toast.error(`Failed to remove plant: ${message}`);
@@ -87,6 +94,30 @@ export default function HomePage() {
   const handleCancelDelete = () => {
     setIsDeleteModalOpen(false);
     setPlantToDelete(null);
+  };
+
+  const handleEditPlant = (deviceId: string) => {
+    setPlantToEdit(deviceId);
+    setIsEditModalOpen(true);
+  };
+
+  const handleConfirmEdit = async (deviceId: string, plantName: string, plantType?: string | null) => {
+    try {
+      await addScannedPlant(deviceId, plantName, plantType);
+      setIsEditModalOpen(false);
+      setPlantToEdit(null);
+      toast.success(`🌱 Plant "${plantName}" updated successfully!`);
+      void refresh(); // Refresh the plant list
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update plant";
+      toast.error(`Failed to update plant: ${message}`);
+      console.error("Error updating plant:", err);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditModalOpen(false);
+    setPlantToEdit(null);
   };
 
   return (
@@ -165,6 +196,7 @@ export default function HomePage() {
               key={plant.plantId}
               plant={plant}
               onRemove={handleRemovePlant}
+              onEdit={handleEditPlant}
             />
           ))}
         </section>
@@ -200,6 +232,14 @@ export default function HomePage() {
           deviceId={plantToDelete}
           onConfirm={handleConfirmDelete}
           onCancel={handleCancelDelete}
+        />
+      )}
+
+      {isEditModalOpen && plantToEdit && (
+        <EditPlantModal
+          deviceId={plantToEdit}
+          onConfirm={handleConfirmEdit}
+          onCancel={handleCancelEdit}
         />
       )}
     </main>
