@@ -26,7 +26,7 @@ cd ml
 python -m venv .venv
 .venv\Scripts\Activate (Windows)
 pip install -r model/requirements.txt
-python -m test.local_test.py
+python -m test.local_test
 ```
 
 Sample output:

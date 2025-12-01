@@ -9,23 +9,25 @@ import boto3
 sagemaker = boto3.client("sagemaker")
 
 MODEL_NAME = os.environ["MODEL_NAME"]
-SAGEMAKER_ROLE_ARN = os.environ["SAGEMAKER_ROLE_ARN"]
 RAW_BUCKET = os.environ["RAW_BUCKET"]
 BATCH_RESULTS_BUCKET = os.environ["BATCH_RESULTS_BUCKET"]
 STAGE = os.environ["STAGE"]
 
 
 def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
+    """
+    Launches Batch Transofmr job that processes all photos from the previous hour.
+    Gets photos from: photos/YYYYMMDDTHH/<device_Id>.jpg
+    """
+
     # Calculate previous hour timestamp (scheduler runs at :00, batch runs at :05)
     # This ensures we process photos from the hour that just completed
     previous_hour = datetime.now(timezone.utc) - timedelta(hours=1)
     photo_timestamp = previous_hour.strftime("%Y%m%dT%H")
-    
-    # Job creation timestamp for output organization
-    job_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
     # Process photos from the specific hourly folder
     input_prefix = f"photos/{photo_timestamp}/"
+    job_timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output_prefix = f"{STAGE}/{job_timestamp}/"
 
     transform_job_name = f"{STAGE}-leaf-batch-{int(time.time())}"

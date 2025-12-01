@@ -146,6 +146,8 @@ TRANSFORM = transforms.Compose([
     transforms.ToTensor(),
 ])
 
+CURRENT_FILENAME = None
+
 
 def preprocess_image_from_bytes(image_bytes: bytes) -> torch.Tensor:
     """Convert raw image bytes into a preprocessed tensor."""
@@ -154,18 +156,31 @@ def preprocess_image_from_bytes(image_bytes: bytes) -> torch.Tensor:
     return tensor
 
 
-def predict_image_tensor(img_tensor: torch.Tensor, model: nn.Module) -> str:
+def predict_image_tensor(img_tensor: torch.Tensor, model: nn.Module):
     """
     img_tensor: shape [3, 256, 256] on CPU
-    Return: full class name string (e.g., 'Apple___Black_rot')
+    Returns:
+        class_idx (int)
+        class_name (str)
+        confidence (float)
     """
     model.eval()
     with torch.no_grad():
-        xb = img_tensor.unsqueeze(0).to(DEVICE)  # [1, 3, 256, 256]
+        xb = img_tensor.unsqueeze(0).to(DEVICE)
         outputs = model(xb)
+
+        # predicted class index
         _, preds = torch.max(outputs, dim=1)
         class_idx = preds[0].item()
-        return CLASSES[class_idx]
+
+        # full class name
+        class_name = CLASSES[class_idx]
+
+        # softmax confidence
+        probs = torch.softmax(outputs, dim=1)[0]
+        confidence = probs[class_idx].item()
+
+        return class_idx, class_name, float(confidence)
 
 
 def predict_health_from_class_name(class_name: str) -> str:
@@ -204,6 +219,18 @@ def input_fn(request_body, content_type: str):
       - 'application/x-image' (SageMaker default)
       - 'image/jpeg', 'image/png'
     """
+    global CURRENT_FILENAME
+
+    input_dir = "/opt/ml/input/data"
+    try:
+        files = os.listdir(input_dir)
+        if files:
+            CURRENT_FILENAME = files[0]
+        else:
+            CURRENT_FILENAME = None
+    except Exception:
+        CURRENT_FILENAME = None
+
     if content_type in ("application/x-image", "image/jpeg", "image/png", "image/jpg"):
         if isinstance(request_body, (bytes, bytearray)):
             image_bytes = request_body
@@ -221,11 +248,18 @@ def predict_fn(input_data, model):
     Run prediction on the preprocessed tensor.
     input_data: torch.Tensor [3, 256, 256] on CPU
     """
-    class_name = predict_image_tensor(input_data, model)
+    global CURRENT_FILENAME
+    
+    class_idx, class_name, confidence = predict_image_tensor(input_data, model)
     binary_prediction = predict_health_from_class_name(class_name)
 
-    # Only return binary prediction as requested
-    return {"binary_prediction": binary_prediction}
+    return {
+        "filename": CURRENT_FILENAME,
+        "class_idx": class_idx,
+        "class_name": class_name,
+        "binary_prediction": binary_prediction,
+        "confidence": confidence,
+    }
 
 
 def output_fn(prediction, accept: str):

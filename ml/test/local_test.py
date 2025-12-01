@@ -39,7 +39,7 @@ def main():
         body, _ = output_fn(prediction_dict, accept="application/json")
 
         result = json.loads(body)
-        print(f"{fname} -> {result['binary_prediction']}")
+        print(f"{fname} -> {result}")
 
 if __name__ == "__main__":
     main()
