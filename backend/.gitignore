@@ -11,4 +11,4 @@ __pycache__
 .cdk.staging
 cdk.out
 
-runtime/ecs/fastapi/scripts/script_commands.md
+scripts/script_commands.md
