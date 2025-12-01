@@ -63,7 +63,7 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
                 "metrics": {
                     "prediction": binary_prediction,
                     "className": class_name,
-                    "confidence": Decimal(str(confidence)),
+                    "diseaseRisk": Decimal(str(confidence)),
                     "filename": filename,
                 },
                 "raw": prediction,
