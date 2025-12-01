@@ -28,7 +28,7 @@ function formatPoints(points: PlantTimeSeriesPoint[]): ChartDatum[] {
       // Fallback if formatting fails
       console.warn("Failed to format point timestamp:", error, point);
       return {
-        ...point,
+    ...point,
         label: new Date(point.timestamp * 1000).toLocaleString("en-SG", { 
           timeZone: "Asia/Singapore",
           month: "short",

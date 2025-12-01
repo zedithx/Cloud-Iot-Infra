@@ -263,6 +263,11 @@ export default function PlantDetailPage() {
 
   // Water tank status (separate from metric comparisons since it's binary)
   const waterTankStatus = snapshot?.waterTankEmpty ?? null;
+  const isWaterTankEmpty = waterTankStatus === 1;
+
+  // Determine if disease risk is high (threshold: 0.8 or 80%)
+  const diseaseRisk = snapshot?.score ?? null;
+  const isHighDiseaseRisk = diseaseRisk !== null && (diseaseRisk >= 0.8 || snapshot?.disease === true);
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 pb-16 pt-8 sm:px-6 md:gap-10 md:px-12">
@@ -306,21 +311,37 @@ export default function PlantDetailPage() {
           </p>
         </div>
         <div className="grid gap-3 text-sm text-emerald-700 min-[460px]:grid-cols-2">
-          <div className="flex flex-col gap-1.5 rounded-3xl border border-emerald-200 bg-white px-4 py-3">
-            <p className="text-[0.65rem] uppercase tracking-[0.28em] text-emerald-500 sm:text-xs">
+          <div className={`flex flex-col gap-1.5 rounded-3xl border px-4 py-3 ${
+            isHighDiseaseRisk
+              ? "border-rose-300 bg-rose-50"
+              : "border-emerald-200 bg-white"
+          }`}>
+            <p className={`text-[0.65rem] uppercase tracking-[0.28em] sm:text-xs ${
+              isHighDiseaseRisk ? "text-rose-600" : "text-emerald-500"
+            }`}>
               Disease risk
             </p>
-            <p className="text-3xl font-semibold text-emerald-900">
+            <p className={`text-3xl font-semibold ${
+              isHighDiseaseRisk ? "text-rose-700" : "text-emerald-900"
+            }`}>
               {snapshot?.score !== undefined && snapshot?.score !== null
                 ? `${Math.round(snapshot.score * 100)}%`
                 : "—"}
             </p>
           </div>
-          <div className="flex flex-col gap-1.5 rounded-3xl border border-emerald-200 bg-white px-4 py-3">
-            <p className="text-[0.65rem] uppercase tracking-[0.28em] text-emerald-500 sm:text-xs">
+          <div className={`flex flex-col gap-1.5 rounded-3xl border px-4 py-3 ${
+            isWaterTankEmpty
+              ? "border-amber-300 bg-amber-50"
+              : "border-emerald-200 bg-white"
+          }`}>
+            <p className={`text-[0.65rem] uppercase tracking-[0.28em] sm:text-xs ${
+              isWaterTankEmpty ? "text-amber-600" : "text-emerald-500"
+            }`}>
               Water Tank Status
             </p>
-            <p className="text-2xl font-semibold text-emerald-900">
+            <p className={`text-2xl font-semibold ${
+              isWaterTankEmpty ? "text-amber-700" : "text-emerald-900"
+            }`}>
               {waterTankStatus === null
                 ? "—"
                 : waterTankStatus === 1
@@ -330,6 +351,127 @@ export default function PlantDetailPage() {
           </div>
         </div>
       </header>
+
+      {/* Alert Banners - Show side by side if both are present, otherwise full width */}
+      {(isHighDiseaseRisk || isWaterTankEmpty) && (
+        <div
+          className={`grid gap-4 ${isHighDiseaseRisk && isWaterTankEmpty ? "md:grid-cols-2" : ""}`}
+          data-aos="fade-up"
+          data-aos-delay="120"
+        >
+          {/* Disease Risk Alert Banner */}
+          {isHighDiseaseRisk && (
+            <div
+              className="card-surface border-2 border-rose-500 bg-gradient-to-r from-rose-50 to-orange-50 shadow-lg"
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl" aria-hidden="true">
+                      🚨
+                    </span>
+                    <h2 className="text-xl font-bold text-rose-900 sm:text-2xl">
+                      High Disease Risk Detected
+                    </h2>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <div className="rounded-lg bg-rose-100 px-4 py-3 text-center">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-rose-600">
+                        Risk Level
+                      </p>
+                      <p className="text-3xl font-bold text-rose-700">
+                        {diseaseRisk !== null && diseaseRisk >= 0.9 ? "CRITICAL" : "HIGH"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-sm font-semibold text-rose-800 sm:text-base">
+                  Disease risk is at <strong>{Math.round((diseaseRisk ?? 0) * 100)}%</strong> - Immediate action recommended
+                </p>
+                <div className="space-y-2 rounded-lg bg-white/60 p-4">
+                  <p className="text-sm font-semibold text-rose-900">Recommended Actions:</p>
+                  <ul className="ml-5 list-disc space-y-1.5 text-sm text-rose-800">
+                    <li>
+                      <strong>Isolate the plant</strong> to prevent disease spread to other plants
+                    </li>
+                    <li>
+                      <strong>Improve air circulation</strong> by adjusting fan settings to reduce humidity
+                    </li>
+                    <li>
+                      <strong>Reduce watering frequency</strong> to lower soil moisture and prevent fungal growth
+                    </li>
+                    <li>
+                      <strong>Apply appropriate treatment</strong> based on the specific disease type (fungicide, bactericide, etc.)
+                    </li>
+                    <li>
+                      <strong>Monitor closely</strong> and check back in 24-48 hours to assess improvement
+                    </li>
+                    <li>
+                      <strong>Consider removing severely affected leaves</strong> to prevent further spread
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Water Tank Empty Alert Banner */}
+          {isWaterTankEmpty && (
+            <div
+              className="card-surface border-2 border-amber-500 bg-gradient-to-r from-amber-50 to-orange-50 shadow-lg"
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl" aria-hidden="true">
+                      ⚠️
+                    </span>
+                    <h2 className="text-xl font-bold text-amber-900 sm:text-2xl">
+                      Water Tank Empty
+                    </h2>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <div className="rounded-lg bg-amber-100 px-4 py-3 text-center">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">
+                        Status
+                      </p>
+                      <p className="text-3xl font-bold text-amber-700">
+                        EMPTY
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-sm font-semibold text-amber-800 sm:text-base">
+                  The water tank for <strong>{displayName}</strong> is empty
+                </p>
+                <div className="space-y-2 rounded-lg bg-white/60 p-4">
+                  <p className="text-sm font-semibold text-amber-900">Action Required:</p>
+                  <ul className="ml-5 list-disc space-y-1.5 text-sm text-amber-800">
+                    <li>
+                      <strong>Refill the water tank immediately</strong> to ensure continuous irrigation
+                    </li>
+                    <li>
+                      <strong>Check for leaks or blockages</strong> that may have caused rapid water depletion
+                    </li>
+                    <li>
+                      <strong>Verify the water level sensor</strong> is functioning correctly after refilling
+                    </li>
+                    <li>
+                      <strong>Monitor soil moisture levels</strong> to ensure plants receive adequate hydration
+                    </li>
+                    <li>
+                      <strong>Consider setting up automated alerts</strong> for future low water level events
+                    </li>
+                    <li>
+                      <strong>Check the irrigation system</strong> to ensure it&apos;s operating efficiently
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <section
         className="card-surface space-y-5"
@@ -631,7 +773,7 @@ export default function PlantDetailPage() {
                               {point.score !== undefined && point.score !== null
                                 ? `${Math.round(point.score * 100)}%`
                                 : "—"}
-                            </td>
+                          </td>
                           <td className="px-2 py-2 sm:px-3">
                               <span
                                 className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[0.65rem] font-semibold ${

@@ -11,6 +11,4 @@ __pycache__
 .cdk.staging
 cdk.out
 
-# Frontend build artefacts
-../frontend/node_modules
-../frontend/.next
+scripts/script_commands.md
