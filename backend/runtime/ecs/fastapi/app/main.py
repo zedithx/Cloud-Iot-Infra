@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -480,26 +481,61 @@ def list_plants() -> List[PlantSnapshot]:
 
 @app.get("/plants/{plant_id}", response_model=PlantSnapshot)
 def plant_detail(plant_id: str) -> PlantSnapshot:
+    # Query all items for this device to get both telemetry and disease records
     response = telemetry_table.query(
         KeyConditionExpression=Key("deviceId").eq(plant_id),
-        Limit=1,
-        ScanIndexForward=False,
     )
     items = response.get("Items", [])
     if not items:
         raise HTTPException(status_code=404, detail="Plant not found")
-    item = _normalise_item(items[0])
+    
+    # Separate telemetry and disease records (similar to /plants endpoint)
+    telemetry_data: Optional[Dict[str, Any]] = None
+    disease_data: Optional[Dict[str, Any]] = None
+    
+    for raw in items:
+        normalised = _normalise_item(raw)
+        reading_type = raw.get("readingType", "")
+        
+        if reading_type == "telemetry":
+            if not telemetry_data or normalised.get("timestamp", 0) > telemetry_data.get("timestamp", 0):
+                telemetry_data = normalised
+        elif reading_type == "disease":
+            if not disease_data or normalised.get("timestamp", 0) > disease_data.get("timestamp", 0):
+                disease_data = normalised
+    
+    # Use telemetry data as base, merge disease score if available
+    merged = telemetry_data.copy() if telemetry_data else {}
+    if disease_data:
+        if disease_data.get("score") is not None:
+            merged["score"] = disease_data.get("score")
+        if disease_data.get("disease") is not None:
+            merged["disease"] = disease_data.get("disease")
+        # Use the most recent timestamp
+        merged["timestamp"] = max(
+            merged.get("timestamp", 0),
+            disease_data.get("timestamp", 0)
+        )
+    
+    # If no telemetry data but we have disease data, use disease data as base
+    if not telemetry_data and disease_data:
+        merged = disease_data.copy()
+    
+    # Ensure plantId is set
+    if "plantId" not in merged:
+        merged["plantId"] = plant_id
+    
     return PlantSnapshot(
-        plantId=item["plantId"],
-        lastSeen=item.get("timestamp", 0),
-        disease=item.get("disease"),
-        score=item.get("score"),
-        temperatureC=item.get("temperatureC"),
-        humidity=item.get("humidity"),
-        soilMoisture=item.get("soilMoisture"),
-        lightLux=item.get("lightLux"),
-        waterTankEmpty=item.get("waterTankEmpty"),
-        notes=item.get("notes"),
+        plantId=merged["plantId"],
+        lastSeen=merged.get("timestamp", 0),
+        disease=merged.get("disease"),
+        score=merged.get("score"),
+        temperatureC=merged.get("temperatureC"),
+        humidity=merged.get("humidity"),
+        soilMoisture=merged.get("soilMoisture"),
+        lightLux=merged.get("lightLux"),
+        waterTankEmpty=merged.get("waterTankEmpty"),
+        notes=merged.get("notes"),
     )
 
 
@@ -701,9 +737,14 @@ def set_device_plant_type(device_id: str, request: PlantTypeRequest) -> Dict[str
 
 
 def _device_id_to_timestamp(device_id: str) -> int:
-    """Convert device ID string to a numeric timestamp for DynamoDB sort key."""
-    # Use hash to convert string to consistent number
-    return abs(hash(device_id)) % (10 ** 10)  # Keep it within reasonable int range
+    """Convert device ID string to a numeric timestamp for DynamoDB sort key.
+    Uses SHA256 for deterministic hashing (Python's hash() is not deterministic across processes).
+    """
+    # Use SHA256 for deterministic hashing
+    hash_bytes = hashlib.sha256(device_id.encode('utf-8')).digest()
+    # Convert first 8 bytes to integer and take modulo to keep it within reasonable range
+    hash_int = int.from_bytes(hash_bytes[:8], byteorder='big')
+    return hash_int % (10 ** 10)  # Keep it within reasonable int range
 
 
 def _timestamp_to_device_id(items: List[Dict[str, Any]]) -> Dict[int, str]:
@@ -775,38 +816,100 @@ def add_scanned_plant(plant: ScannedPlantRequest) -> ScannedPlantResponse:
         timestamp_key = str(timestamp_key_int)  # Convert to string for DynamoDB
         logger.debug("Converted deviceId to timestamp key: %s -> %s (string)", plant.deviceId, timestamp_key)
         
-        # Check if item already exists
+        # Check if item already exists by querying all USER_PLANTS and finding matching deviceId
+        # This ensures we find existing records even if hash changed (e.g., from old hash function)
+        is_update = False
+        existing_timestamp_key = timestamp_key
         try:
-            existing = telemetry_table.get_item(
-                Key={
-                    "deviceId": "USER_PLANTS",
-                    "timestamp": timestamp_key
-                }
+            # Query all USER_PLANTS records
+            response = telemetry_table.query(
+                KeyConditionExpression=Key("deviceId").eq("USER_PLANTS")
             )
-            is_update = "Item" in existing
-            logger.info("Item %s for deviceId=%s", "exists (updating)" if is_update else "does not exist (creating)", plant.deviceId)
+            
+            # Look for existing record with matching deviceId in plantName field
+            for item in response.get("Items", []):
+                plant_name_full = item.get("plantName", "")
+                if "|" in plant_name_full:
+                    parts = plant_name_full.split("|", 1)
+                    if len(parts) >= 1 and parts[0] == plant.deviceId:
+                        # Found existing record for this deviceId
+                        existing_timestamp_key = item.get("timestamp")
+                        is_update = True
+                        logger.info("Found EXISTING record for deviceId=%s (timestamp_key=%s), will UPDATE. Existing plantName=%s, plantType=%s", 
+                                   plant.deviceId, existing_timestamp_key, plant_name_full, item.get("plantType"))
+                        break
+            
+            if not is_update:
+                logger.info("No existing record found for deviceId=%s, will CREATE new record with timestamp_key=%s", 
+                           plant.deviceId, timestamp_key)
         except Exception as e:
-            logger.warning("Could not check for existing item: %s", e)
+            logger.warning("Could not check for existing item: %s", e, exc_info=True)
             is_update = False
+            existing_timestamp_key = timestamp_key
         
-        # Store deviceId and plantName in plantName field with delimiter
-        item = {
-            "deviceId": "USER_PLANTS",
-            "timestamp": timestamp_key,  # Must be string per table schema
-            "plantName": f"{plant.deviceId}|{plant.plantName}",  # Store both with delimiter
-        }
-        
-        # Always include plantType if provided (even if empty string, but not if None)
-        # If plantType is None, we don't include it, which means it won't be updated/cleared
-        # To properly clear plantType, we'd need to use update_item with REMOVE, but for now
-        # we'll only update it if a new value is provided
-        if plant.plantType is not None and plant.plantType != "":
-            item["plantType"] = plant.plantType
-        
-        logger.debug("Putting item to DynamoDB (will %s): %s", "update" if is_update else "create", item)
-        # put_item will update if the item exists (same partition + sort key), or create if it doesn't
-        telemetry_table.put_item(Item=item)
-        logger.info("Successfully saved scanned plant to DynamoDB")
+        if is_update:
+            # Use update_item for existing records to properly handle plantType updates (including None)
+            # Use the existing timestamp_key (which might be different from the new hash if hash function changed)
+            set_parts = ["plantName = :plantName"]
+            expression_attribute_values = {
+                ":plantName": f"{plant.deviceId}|{plant.plantName}"
+            }
+            
+            # Handle plantType: if None, remove it; otherwise set it
+            if plant.plantType is None:
+                # Remove plantType attribute
+                update_expression = "SET " + ", ".join(set_parts) + " REMOVE plantType"
+                logger.debug("Updating existing item (removing plantType) with expression: %s, values: %s", update_expression, expression_attribute_values)
+                telemetry_table.update_item(
+                    Key={
+                        "deviceId": "USER_PLANTS",
+                        "timestamp": existing_timestamp_key  # Use existing timestamp key
+                    },
+                    UpdateExpression=update_expression,
+                    ExpressionAttributeValues=expression_attribute_values
+                )
+            elif plant.plantType != "":
+                # Set plantType
+                set_parts.append("plantType = :plantType")
+                expression_attribute_values[":plantType"] = plant.plantType
+                update_expression = "SET " + ", ".join(set_parts)
+                logger.debug("Updating existing item (setting plantType) with expression: %s, values: %s", update_expression, expression_attribute_values)
+                telemetry_table.update_item(
+                    Key={
+                        "deviceId": "USER_PLANTS",
+                        "timestamp": existing_timestamp_key  # Use existing timestamp key
+                    },
+                    UpdateExpression=update_expression,
+                    ExpressionAttributeValues=expression_attribute_values
+                )
+            else:
+                # Empty string - just update plantName, leave plantType as is
+                update_expression = "SET " + ", ".join(set_parts)
+                logger.debug("Updating existing item (no plantType change) with expression: %s, values: %s", update_expression, expression_attribute_values)
+                telemetry_table.update_item(
+                    Key={
+                        "deviceId": "USER_PLANTS",
+                        "timestamp": existing_timestamp_key  # Use existing timestamp key
+                    },
+                    UpdateExpression=update_expression,
+                    ExpressionAttributeValues=expression_attribute_values
+                )
+            logger.info("Successfully updated scanned plant in DynamoDB (used existing timestamp_key=%s)", existing_timestamp_key)
+        else:
+            # Use put_item for new records
+            item = {
+                "deviceId": "USER_PLANTS",
+                "timestamp": timestamp_key,  # Must be string per table schema
+                "plantName": f"{plant.deviceId}|{plant.plantName}",  # Store both with delimiter
+            }
+            
+            # Include plantType only if it's not None and not empty
+            if plant.plantType is not None and plant.plantType != "":
+                item["plantType"] = plant.plantType
+            
+            logger.debug("Creating new item: %s", item)
+            telemetry_table.put_item(Item=item)
+            logger.info("Successfully created scanned plant in DynamoDB")
         
         return ScannedPlantResponse(
             deviceId=plant.deviceId,

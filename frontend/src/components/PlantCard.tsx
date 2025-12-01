@@ -18,16 +18,45 @@ function getPlantTypeLabel(plantId: string): string {
   return "Unknown";
 }
 
-function statusLabel(plant: PlantSnapshot): { label: string; tone: string } {
+function getPlantTypeEmoji(plantId: string): string {
+  const plantType = getPlantType(plantId);
+  const emojiMap: Record<string, string> = {
+    basil: "🌿",
+    strawberry: "🍓",
+    mint: "🌿",
+    lettuce: "🥬",
+  };
+  return emojiMap[plantType || ""] || "🌱";
+}
+
+function statusLabel(plant: PlantSnapshot): { label: string; tone: string; emoji: string } {
   if (plant.disease === true) {
-    return { label: "Needs attention", tone: "bg-rose-100 text-rose-600" };
+    return { 
+      label: "Needs attention", 
+      tone: "bg-rose-100 text-rose-600",
+      emoji: "🌧️"
+    };
   }
-  if (plant.disease === false) {
-    return { label: "Healthy", tone: "bg-emerald-100 text-emerald-700" };
-  }
-  // Show plant type instead of "Monitoring"
+  
+  // Always show plant type with emoji, regardless of disease status
   const plantTypeLabel = getPlantTypeLabel(plant.plantId);
-  return { label: plantTypeLabel, tone: "bg-bloom-100 text-bloom-500" };
+  const plantEmoji = getPlantTypeEmoji(plant.plantId);
+  
+  if (plant.disease === false) {
+    // Healthy - show plant type with emoji
+    return { 
+      label: plantTypeLabel, 
+      tone: "bg-emerald-100 text-emerald-700",
+      emoji: plantEmoji
+    };
+  }
+  
+  // Unknown disease status - show plant type with emoji
+  return { 
+    label: plantTypeLabel, 
+    tone: "bg-bloom-100 text-bloom-500",
+    emoji: plantEmoji
+  };
 }
 
 function getDisplayName(plant: PlantSnapshot): string {
@@ -119,10 +148,10 @@ export default function PlantCard({ plant, onRemove, onEdit }: PlantCardProps) {
       >
         <div className="flex items-center pr-12">
           <span className={`pill ${status.tone}`}>
-            {status.label}
-            <span aria-hidden className="text-base">
-              {plant.disease ? "🌧️" : "🌼"}
+            <span aria-hidden className="text-base mr-1">
+              {status.emoji}
             </span>
+            {status.label}
           </span>
         </div>
         <div className="space-y-3">
