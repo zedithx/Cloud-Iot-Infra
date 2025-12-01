@@ -15,7 +15,7 @@ Usage:
     # Test low soil moisture threshold
     python scripts/send_iotcore_messages.py --low-moisture
     
-    # Test water tank empty
+    # Test water tank empty (sends waterTankFilled=0, which gets converted to waterTankEmpty=1)
     python scripts/send_iotcore_messages.py --water-tank-empty
     
     # Test multiple scenarios
@@ -28,7 +28,7 @@ Flags:
     --low-light          Send light below threshold (~5000 lux)
     --high-temperature   Send high temperature for trend testing (~35°C)
     --high-humidity      Send high humidity for trend testing (~90%)
-    --water-tank-empty   Send waterTankEmpty=1 (tank is empty)
+    --water-tank-empty   Send waterTankFilled=0 (tank is empty, matches real device behavior)
     --device-id ID       Specify device ID (default: rpi-01)
     --count N            Number of messages to send (default: 1)
 
@@ -141,10 +141,12 @@ def generate_telemetry_data(
         data["lightLux"] = round(15000 + light_variation, 0)
     
     # Water Tank Status
+    # Note: Real device sends waterTankFilled (1 = filled, 0 = not filled)
+    # The backend converts this to waterTankEmpty (1 = empty, 0 = has water)
     if water_tank_empty:
-        data["waterTankEmpty"] = 1  # Tank is empty
+        data["waterTankFilled"] = 0  # Tank is empty (not filled)
     else:
-        data["waterTankEmpty"] = 0  # Tank has water
+        data["waterTankFilled"] = 1  # Tank has water (filled)
     
     return data
 

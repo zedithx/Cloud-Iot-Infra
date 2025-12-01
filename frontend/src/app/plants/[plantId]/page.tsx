@@ -352,122 +352,124 @@ export default function PlantDetailPage() {
         </div>
       </header>
 
-      {/* Disease Risk Alert Banner */}
-      {isHighDiseaseRisk && (
+      {/* Alert Banners - Show side by side if both are present, otherwise full width */}
+      {(isHighDiseaseRisk || isWaterTankEmpty) && (
         <div
-          className="card-surface border-2 border-rose-500 bg-gradient-to-r from-rose-50 to-orange-50 shadow-lg"
+          className={`grid gap-4 ${isHighDiseaseRisk && isWaterTankEmpty ? "md:grid-cols-2" : ""}`}
           data-aos="fade-up"
           data-aos-delay="120"
         >
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex-1 space-y-2">
-              <div className="flex items-center gap-3">
-                <span className="text-3xl" aria-hidden="true">
-                  🚨
-                </span>
-                <h2 className="text-xl font-bold text-rose-900 sm:text-2xl">
-                  High Disease Risk Detected
-                </h2>
-              </div>
-              <p className="text-sm font-semibold text-rose-800 sm:text-base">
-                Disease risk is at <strong>{Math.round((diseaseRisk ?? 0) * 100)}%</strong> - Immediate action recommended
-              </p>
-              <div className="mt-3 space-y-2 rounded-lg bg-white/60 p-4">
-                <p className="text-sm font-semibold text-rose-900">Recommended Actions:</p>
-                <ul className="ml-5 list-disc space-y-1.5 text-sm text-rose-800">
-                  <li>
-                    <strong>Isolate the plant</strong> to prevent disease spread to other plants
-                  </li>
-                  <li>
-                    <strong>Improve air circulation</strong> by adjusting fan settings to reduce humidity
-                  </li>
-                  <li>
-                    <strong>Reduce watering frequency</strong> to lower soil moisture and prevent fungal growth
-                  </li>
-                  <li>
-                    <strong>Apply appropriate treatment</strong> based on the specific disease type (fungicide, bactericide, etc.)
-                  </li>
-                  <li>
-                    <strong>Monitor closely</strong> and check back in 24-48 hours to assess improvement
-                  </li>
-                  <li>
-                    <strong>Consider removing severely affected leaves</strong> to prevent further spread
-                  </li>
-                </ul>
+          {/* Disease Risk Alert Banner */}
+          {isHighDiseaseRisk && (
+            <div
+              className="card-surface border-2 border-rose-500 bg-gradient-to-r from-rose-50 to-orange-50 shadow-lg"
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl" aria-hidden="true">
+                      🚨
+                    </span>
+                    <h2 className="text-xl font-bold text-rose-900 sm:text-2xl">
+                      High Disease Risk Detected
+                    </h2>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <div className="rounded-lg bg-rose-100 px-4 py-3 text-center">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-rose-600">
+                        Risk Level
+                      </p>
+                      <p className="text-3xl font-bold text-rose-700">
+                        {diseaseRisk !== null && diseaseRisk >= 0.9 ? "CRITICAL" : "HIGH"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-sm font-semibold text-rose-800 sm:text-base">
+                  Disease risk is at <strong>{Math.round((diseaseRisk ?? 0) * 100)}%</strong> - Immediate action recommended
+                </p>
+                <div className="space-y-2 rounded-lg bg-white/60 p-4">
+                  <p className="text-sm font-semibold text-rose-900">Recommended Actions:</p>
+                  <ul className="ml-5 list-disc space-y-1.5 text-sm text-rose-800">
+                    <li>
+                      <strong>Isolate the plant</strong> to prevent disease spread to other plants
+                    </li>
+                    <li>
+                      <strong>Improve air circulation</strong> by adjusting fan settings to reduce humidity
+                    </li>
+                    <li>
+                      <strong>Reduce watering frequency</strong> to lower soil moisture and prevent fungal growth
+                    </li>
+                    <li>
+                      <strong>Apply appropriate treatment</strong> based on the specific disease type (fungicide, bactericide, etc.)
+                    </li>
+                    <li>
+                      <strong>Monitor closely</strong> and check back in 24-48 hours to assess improvement
+                    </li>
+                    <li>
+                      <strong>Consider removing severely affected leaves</strong> to prevent further spread
+                    </li>
+                  </ul>
+                </div>
               </div>
             </div>
-            <div className="flex-shrink-0">
-              <div className="rounded-lg bg-rose-100 px-4 py-3 text-center">
-                <p className="text-xs font-semibold uppercase tracking-wide text-rose-600">
-                  Risk Level
-                </p>
-                <p className="text-3xl font-bold text-rose-700">
-                  {diseaseRisk !== null && diseaseRisk >= 0.9 ? "CRITICAL" : "HIGH"}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* Water Tank Empty Alert Banner */}
-      {isWaterTankEmpty && (
-        <div
-          className="card-surface border-2 border-amber-500 bg-gradient-to-r from-amber-50 to-orange-50 shadow-lg"
-          data-aos="fade-up"
-          data-aos-delay="120"
-        >
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex-1 space-y-2">
-              <div className="flex items-center gap-3">
-                <span className="text-3xl" aria-hidden="true">
-                  ⚠️
-                </span>
-                <h2 className="text-xl font-bold text-amber-900 sm:text-2xl">
-                  Water Tank Empty
-                </h2>
-              </div>
-              <p className="text-sm font-semibold text-amber-800 sm:text-base">
-                The water tank for <strong>{displayName}</strong> is empty and requires immediate refilling
-              </p>
-              <div className="mt-3 space-y-2 rounded-lg bg-white/60 p-4">
-                <p className="text-sm font-semibold text-amber-900">Action Required:</p>
-                <ul className="ml-5 list-disc space-y-1.5 text-sm text-amber-800">
-                  <li>
-                    <strong>Refill the water tank immediately</strong> to ensure continuous irrigation
-                  </li>
-                  <li>
-                    <strong>Check for leaks or blockages</strong> that may have caused rapid water depletion
-                  </li>
-                  <li>
-                    <strong>Verify the water level sensor</strong> is functioning correctly after refilling
-                  </li>
-                  <li>
-                    <strong>Monitor soil moisture levels</strong> to ensure plants receive adequate hydration
-                  </li>
-                  <li>
-                    <strong>Consider setting up automated alerts</strong> for future low water level events
-                  </li>
-                  <li>
-                    <strong>Check the irrigation system</strong> to ensure it&apos;s operating efficiently
-                  </li>
-                </ul>
-              </div>
-            </div>
-            <div className="flex-shrink-0">
-              <div className="rounded-lg bg-amber-100 px-4 py-3 text-center">
-                <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">
-                  Status
+          {/* Water Tank Empty Alert Banner */}
+          {isWaterTankEmpty && (
+            <div
+              className="card-surface border-2 border-amber-500 bg-gradient-to-r from-amber-50 to-orange-50 shadow-lg"
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-3xl" aria-hidden="true">
+                      ⚠️
+                    </span>
+                    <h2 className="text-xl font-bold text-amber-900 sm:text-2xl">
+                      Water Tank Empty
+                    </h2>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <div className="rounded-lg bg-amber-100 px-4 py-3 text-center">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">
+                        Status
+                      </p>
+                      <p className="text-3xl font-bold text-amber-700">
+                        EMPTY
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-sm font-semibold text-amber-800 sm:text-base">
+                  The water tank for <strong>{displayName}</strong> is empty
                 </p>
-                <p className="text-3xl font-bold text-amber-700">
-                  EMPTY
-                </p>
-                <p className="mt-2 text-xs text-amber-600">
-                  Refill Required
-                </p>
+                <div className="space-y-2 rounded-lg bg-white/60 p-4">
+                  <p className="text-sm font-semibold text-amber-900">Action Required:</p>
+                  <ul className="ml-5 list-disc space-y-1.5 text-sm text-amber-800">
+                    <li>
+                      <strong>Refill the water tank immediately</strong> to ensure continuous irrigation
+                    </li>
+                    <li>
+                      <strong>Check for leaks or blockages</strong> that may have caused rapid water depletion
+                    </li>
+                    <li>
+                      <strong>Verify the water level sensor</strong> is functioning correctly after refilling
+                    </li>
+                    <li>
+                      <strong>Monitor soil moisture levels</strong> to ensure plants receive adequate hydration
+                    </li>
+                    <li>
+                      <strong>Consider setting up automated alerts</strong> for future low water level events
+                    </li>
+                    <li>
+                      <strong>Check the irrigation system</strong> to ensure it&apos;s operating efficiently
+                    </li>
+                  </ul>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
