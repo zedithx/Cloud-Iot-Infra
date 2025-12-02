@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Get device ID from command line or use default
-const deviceId = process.argv[2] || 'esp32s3_cam_01';
+const deviceId = process.argv[2] || 'brandon_ng_joon_hoe_from_gic';
 const outputPath = path.join(__dirname, 'qr_code.png');
 
 try {

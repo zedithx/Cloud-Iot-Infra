@@ -98,17 +98,19 @@ export default function PlantDetailPage() {
   const metricsSeries = useMemo(() => {
     return series.filter(
       (point) =>
-        (point.temperatureC !== null && point.temperatureC !== undefined) ||
+        point.readingType === "telemetry" ||
+        ((point.temperatureC !== null && point.temperatureC !== undefined) ||
         (point.humidity !== null && point.humidity !== undefined) ||
         (point.soilMoisture !== null && point.soilMoisture !== undefined) ||
-        (point.lightLux !== null && point.lightLux !== undefined)
+        (point.lightLux !== null && point.lightLux !== undefined))
     );
   }, [series]);
 
   const diseaseSeries = useMemo(() => {
     return series.filter(
       (point) =>
-        point.score !== null && point.score !== undefined
+        point.readingType === "disease" ||
+        (point.score !== null && point.score !== undefined)
     );
   }, [series]);
 

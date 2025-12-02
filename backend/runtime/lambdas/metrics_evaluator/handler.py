@@ -125,16 +125,27 @@ def _load_device_config(device_id: str) -> Dict[str, Any]:
 
 
 def _load_latest_disease_score(device_id: str) -> Optional[float]:
+    """Load the latest disease score for a device by querying all records and filtering by readingType."""
+    # Query all records for this device, then filter by readingType
+    # Since disease records now use TS# prefix like telemetry, we filter by readingType instead
     resp = table.query(
-        KeyConditionExpression=Key("deviceId").eq(device_id)
-        & Key("timestamp").begins_with("DISEASE#"),
+        KeyConditionExpression=Key("deviceId").eq(device_id),
         ScanIndexForward=False,
-        Limit=1,
     )
     items = resp.get("Items", [])
-    if not items:
+    
+    # Filter to only disease records and get the latest one
+    disease_items = [
+        item for item in items 
+        if item.get("readingType") == DISEASE_READING
+    ]
+    
+    if not disease_items:
         return None
-    metrics = items[0].get("metrics", {})
+    
+    # Get the latest disease record (already sorted by ScanIndexForward=False)
+    latest = disease_items[0]
+    metrics = latest.get("metrics", {})
     score = metrics.get("diseaseRisk")
     if score is not None:
         decimal_score = _to_decimal(score)

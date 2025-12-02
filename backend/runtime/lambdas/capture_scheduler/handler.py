@@ -4,10 +4,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Set
 
 import boto3
+from botocore.config import Config
+
+# Configure S3 client to use Signature Version 4 (required for KMS-encrypted buckets)
+s3_config = Config(signature_version='s3v4')
 
 iot_client = boto3.client("iot-data")
 dynamodb = boto3.resource("dynamodb")
-s3_client = boto3.client("s3")
+s3_client = boto3.client("s3", config=s3_config)
 
 
 def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
@@ -34,7 +38,7 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     # Publish photo capture command with presigned URL to each device
     sent_count = 0
     for device_id in device_ids:
-        # Generate S3 key with shared timestamp: photos/{timestamp}/{device_id}.jpg
+        # Generate S3 key with hourly timestamp folder: photos/20251202T16/deviceid.jpg
         s3_key = f"{photo_prefix}/{timestamp}/{device_id}.jpg"
 
         # Generate presigned URL for PUT operation

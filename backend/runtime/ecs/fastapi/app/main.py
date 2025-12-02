@@ -8,8 +8,9 @@ from typing import Any, Dict, Iterable, List, Literal, Optional
 
 import boto3
 from boto3.dynamodb.conditions import Key
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 
@@ -27,13 +28,58 @@ iot_client = boto3.client("iot-data", region_name=AWS_REGION)
 
 app = FastAPI(title="CloudIoT FastAPI", version="0.1.0")
 
+# Parse allowed origins from environment variable
+allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "*")
+# Split by comma and strip whitespace, filter out empty strings
+allowed_origins_list = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+# If only "*" is present, use ["*"] for CORS middleware
+if allowed_origins_list == ["*"]:
+    cors_origins = ["*"]
+else:
+    cors_origins = allowed_origins_list
+
+# Log CORS configuration for debugging
+logger = logging.getLogger(__name__)
+logger.info("CORS Configuration - ALLOWED_ORIGINS env: %s", allowed_origins_env)
+logger.info("CORS Configuration - Parsed origins: %s", cors_origins)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in os.environ.get("ALLOWED_ORIGINS", "*").split(",")],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+
+# Exception handler to ensure CORS headers are always present, even on errors
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Ensure CORS headers are present on HTTP exceptions."""
+    origin = request.headers.get("origin")
+    
+    # Determine the CORS origin to use
+    if cors_origins == ["*"]:
+        cors_origin = "*"
+    elif origin and origin in cors_origins:
+        cors_origin = origin
+    elif cors_origins:
+        cors_origin = cors_origins[0]
+    else:
+        cors_origin = "*"
+    
+    response = JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers={
+            "Access-Control-Allow-Origin": cors_origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+    return response
 
 
 class TelemetryPayload(BaseModel):
@@ -99,6 +145,7 @@ class PlantTimeSeriesPoint(BaseModel):
     timestamp: int
     score: Optional[float]
     disease: Optional[bool]
+    reading_type: Optional[str] = Field(None, alias="readingType")
     temperature_c: Optional[float] = Field(None, alias="temperatureC")
     humidity: Optional[float]
     soil_moisture: Optional[float] = Field(None, alias="soilMoisture")
@@ -227,19 +274,20 @@ def _to_epoch_seconds(value: Any) -> int:
     Convert various timestamp representations to epoch seconds (int).
     Accepts:
     - int or numeric strings
-    - typed keys like 'TS#20240101T120000Z-abc123' or 'DISEASE#20240101T120000Z'
+    - typed keys like 'TS#20240101T120000Z-abc123' or 'DISEASE#20240101T120000Z-abc123'
       (parses the ISO-like core and ignores suffix/prefix)
     - ISO-like 'YYYYMMDDTHHMMSSZ' with optional '-suffix'
     Falls back to 0 on failure.
+    Note: New records use TS# prefix, but old disease records may still have DISEASE# prefix.
     """
     if isinstance(value, (int, float)):
         return int(value)
     s = str(value)
-    # Strip type prefixes
-    for prefix in ("TS#", "DISEASE#"):
-        if s.startswith(prefix):
-            s = s[len(prefix) :]
-            break
+    # Strip TS# or DISEASE# prefix (handle both old and new formats)
+    if s.startswith("TS#"):
+        s = s[3:]  # Remove "TS#" prefix
+    elif s.startswith("DISEASE#"):
+        s = s[8:]  # Remove "DISEASE#" prefix
     # Remove suffix after first '-' if present
     core = s.split("-", 1)[0]
     # Try plain integer
@@ -264,6 +312,9 @@ def _derive_disease_flag(score: Optional[float], explicit: Optional[bool]) -> Op
 
 
 def _normalise_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    # Preserve readingType from original item before any processing
+    reading_type = item.get("readingType")
+    
     data = _from_decimal(item.copy())
     plant_id = data.get("plantId") or data.get("deviceId")
     if not plant_id:
@@ -273,6 +324,10 @@ def _normalise_item(item: Dict[str, Any]) -> Dict[str, Any]:
         data["deviceId"] = plant_id
     if "timestamp" in data:
         data["timestamp"] = _to_epoch_seconds(data["timestamp"])
+    
+    # Preserve readingType from original item
+    if reading_type is not None:
+        data["readingType"] = str(reading_type)
     
     # Extract metrics from the metrics map if it exists
     metrics = data.get("metrics", {})
@@ -311,6 +366,21 @@ def _normalise_item(item: Dict[str, Any]) -> Dict[str, Any]:
     score = float(data["score"]) if "score" in data and data["score"] is not None else None
     data["score"] = score
     data["disease"] = _derive_disease_flag(score, data.get("disease"))
+    
+    # Ensure readingType is set - infer from data if not present
+    if "readingType" not in data or data.get("readingType") is None:
+        # Infer readingType: if it has telemetry fields, it's telemetry; if only diseaseRisk/score, it's disease
+        has_telemetry_fields = any(
+            data.get(key) is not None 
+            for key in ["temperatureC", "humidity", "soilMoisture", "lightLux", "waterTankEmpty"]
+        )
+        if has_telemetry_fields:
+            data["readingType"] = "telemetry"
+        elif score is not None:
+            data["readingType"] = "disease"
+        else:
+            data["readingType"] = "telemetry"  # Default fallback
+    
     return data
 
 
@@ -450,7 +520,17 @@ def list_plants() -> List[PlantSnapshot]:
         disease = disease_by_plant.get(plant_id, {})
         
         # Use telemetry data as base, merge disease score if available
-        merged = telemetry.copy()
+        # If telemetry is empty, use disease as base
+        if telemetry:
+            merged = telemetry.copy()
+        else:
+            merged = disease.copy()
+        
+        # Ensure plantId is always set (use the loop variable as fallback)
+        if "plantId" not in merged:
+            merged["plantId"] = plant_id
+        
+        # Merge disease data if available
         if disease.get("score") is not None:
             merged["score"] = disease.get("score")
         if disease.get("disease") is not None:
@@ -546,32 +626,56 @@ def plant_timeseries(
     start: Optional[int] = Query(None, description="Inclusive unix epoch seconds"),
     end: Optional[int] = Query(None, description="Inclusive unix epoch seconds"),
 ) -> PlantTimeSeriesResponse:
-    expression = Key("deviceId").eq(plant_id)
-    if start is not None and end is not None:
-        expression = expression & Key("timestamp").between(str(start), str(end))
-    elif start is not None:
-        expression = expression & Key("timestamp").gte(str(start))
-    elif end is not None:
-        expression = expression & Key("timestamp").lte(str(end))
-
+    """
+    Get time series data for a plant, including both telemetry and disease records.
+    Both telemetry and disease records use TS# prefix format, distinguished by readingType.
+    We query all records and filter by timestamp range after normalization.
+    """
+    # Query all records for this device (both TS# and DISEASE# prefixed timestamps)
+    # We can't use timestamp range in KeyConditionExpression because of prefixes,
+    # so we query all and filter after normalization
     response = telemetry_table.query(
-        KeyConditionExpression=expression,
-        Limit=limit,
+        KeyConditionExpression=Key("deviceId").eq(plant_id),
         ScanIndexForward=False,
     )
+    
     items = response.get("Items", [])
-    normalised = [_normalise_item(item) for item in items]
+    
+    # Normalize all items (converts timestamp prefixes to epoch seconds)
+    normalised = []
+    for item in items:
+        try:
+            normalised_item = _normalise_item(item)
+            # Apply timestamp filtering after normalization
+            timestamp = normalised_item.get("timestamp", 0)
+            if start is not None and timestamp < start:
+                continue
+            if end is not None and timestamp > end:
+                continue
+            normalised.append(normalised_item)
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.warning("Failed to normalize item: %s, error: %s", item, e)
+            continue
+    
+    # Sort by timestamp (ascending for time series)
     normalised.sort(key=lambda item: item.get("timestamp", 0))
-
+    
+    # Apply limit after sorting
+    if limit and len(normalised) > limit:
+        normalised = normalised[-limit:]  # Take the most recent N items
+    
     points = [
         PlantTimeSeriesPoint(
             timestamp=item.get("timestamp", 0),
             score=item.get("score"),
             disease=item.get("disease"),
+            readingType=item.get("readingType"),
             temperatureC=item.get("temperatureC"),
             humidity=item.get("humidity"),
             soilMoisture=item.get("soilMoisture"),
             lightLux=item.get("lightLux"),
+            waterTankEmpty=item.get("waterTankEmpty"),
         )
         for item in normalised
     ]

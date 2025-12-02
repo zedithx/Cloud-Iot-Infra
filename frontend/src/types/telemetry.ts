@@ -38,6 +38,7 @@ export type PlantTimeSeriesPoint = {
   timestamp: number;
   score?: number | null;
   disease?: boolean | null;
+  readingType?: string | null;
   temperatureC?: number | null;
   humidity?: number | null;
   soilMoisture?: number | null;

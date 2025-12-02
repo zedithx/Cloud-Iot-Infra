@@ -1,7 +1,7 @@
-from fileinput import filename
 import json
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional
@@ -15,7 +15,7 @@ s3_client = boto3.client("s3")
 dynamodb = boto3.resource("dynamodb")
 
 DYNAMO_TABLE_NAME = os.environ["DYNAMO_TABLE_NAME"]
-TABLE = dynamodb.Table(DYNAMO_TABLE_NAME)  # This is probabably telemetry table
+TABLE = dynamodb.Table(DYNAMO_TABLE_NAME)
 
 DISEASE_READING_TYPE = "disease"
 
@@ -54,24 +54,36 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
 
             device_id = filename.split(".")[0]  # Assuming filename is {device_id}.jpg
             
-            # DynamoDB timestamp with full precision
-            dynamo_timestamp = f"DISEASE#{_current_timestamp()}"
+            # Use same timestamp format as telemetry: TS#{YYYYMMDDTHHMMSSZ}-{suffix}
+            now = datetime.now(timezone.utc)
+            iso = now.strftime("%Y%m%dT%H%M%SZ")
+            unique_suffix = uuid.uuid4().hex[:6]
+            timestamp = f"TS#{iso}-{unique_suffix}"
+            
+            # Build metrics dict - only diseaseRisk (simplified, matching telemetry pattern)
+            metrics = {
+                "diseaseRisk": confidence,
+            }
+            
+            # Build raw dict (convert values to Decimal for numeric fields)
+            raw_data = {
+                **prediction,
+                "confidence": confidence,
+                "diseaseRisk": confidence,
+            }
+            
             item = {
                 "deviceId": device_id,
-                "timestamp": dynamo_timestamp,
+                "timestamp": timestamp,
                 "readingType": DISEASE_READING_TYPE,
-                "metrics": {
-                    "prediction": binary_prediction,
-                    "className": class_name,
-                    "diseaseRisk": confidence,
-                    "filename": filename,
-                },
-                    "raw": {
-                        **prediction,
-                        "confidence": confidence
-                    },
-                "sourceKey": key,
+                "metrics": _convert_to_decimal_dict(metrics),
+                "raw": _convert_to_decimal_dict(raw_data),
             }
+            
+            # Add sourceKey if available
+            if key:
+                item["sourceKey"] = key
+            
             TABLE.put_item(Item=item)
             processed += 1
 
@@ -91,7 +103,25 @@ def _read_object_lines(bucket: str, key: str) -> Iterable[Dict[str, Any]]:
         except json.JSONDecodeError:
             logger.exception("Failed to decode JSON line: %s", line)
 
-def _current_timestamp() -> str:
-    now = datetime.now(timezone.utc)
-    return now.strftime("%Y%m%dT%H%M%SZ")
+
+def _convert_to_decimal_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert numeric values to Decimal, matching stream_processor behavior."""
+    result = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            result[key] = _convert_to_decimal_dict(value)
+        elif isinstance(value, list):
+            result[key] = [_convert_to_decimal(v) if isinstance(v, (int, float)) else v for v in value]
+        elif isinstance(value, (int, float)):
+            result[key] = Decimal(str(value))
+        else:
+            result[key] = value
+    return result
+
+
+def _convert_to_decimal(value: Any) -> Decimal:
+    """Convert a value to Decimal."""
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
 
