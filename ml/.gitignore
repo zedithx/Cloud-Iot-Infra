@@ -1,0 +1,11 @@
+.venv/
+
+__pycache__/
+*.pyc
+
+.ipynb_checkpoints/
+
+output/
+model.tar.gz
+model/model.pth
+model/model.pt

@@ -18,7 +18,7 @@ class ApplicationEnvironmentConfig:
     sagemaker_model_image_uri: str
     alert_threshold: float
     allowed_origins: str = "*"
-    enable_ml_inference: bool = False
+    enable_ml_inference: bool = True
     ses_from_email: Optional[str] = None
     ses_to_email: Optional[str] = None
     account: Optional[str] = None
@@ -33,11 +33,11 @@ DEFAULT_ENV = ApplicationEnvironmentConfig(
     vpc_cidr="10.20.0.0/16",
     fastapi_image_uri=None,
     alert_email="aersijun@gmail.com",
-    sagemaker_model_data_url="s3://placeholder-model-artifacts/model.tar.gz",
-    sagemaker_model_image_uri="683313688378.dkr.ecr.{region}.amazonaws.com/kmeans:1",
+    sagemaker_model_data_url="s3://dev-infrastructure-mlinferencemodelartifactbucket0-8zngz6jxefzr/models/leaf-disease/model.tar.gz",
+    sagemaker_model_image_uri="763104351884.dkr.ecr.{region}.amazonaws.com/pytorch-inference:2.0.0-cpu-py310",
     alert_threshold=0.8,
     allowed_origins="http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,https://cloud-iot-infra.vercel.app",
-    enable_ml_inference=False,
+    enable_ml_inference=True,
     ses_from_email="tangledsocialapp@gmail.com",
     region="ap-southeast-1",
     ses_to_email="aersijun@gmail.com",
