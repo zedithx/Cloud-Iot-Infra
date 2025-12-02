@@ -9,6 +9,7 @@ from infra.stacks.data.data_plane import DataPlaneConstruct, DataPlaneResources
 from infra.stacks.data.data_processing import DataProcessingConstruct, DataProcessingResources
 from infra.stacks.iot.iot_ingest import IotIngestConstruct, IotIngestResources
 from infra.stacks.ml.ml_inference import MlInferenceConstruct, MlInferenceResources
+from infra.stacks.ml.lambda_ml_inference import LambdaMlInferenceConstruct
 from infra.stacks.networking.networking import NetworkingConstruct, NetworkingResources
 from infra.stacks.notifications import NotificationResources, NotificationsConstruct
 from infra.stacks.operations import OperationsConstruct, OperationsResources
@@ -66,12 +67,18 @@ class InfrastructureStack(Stack):
         ).resources
         self.ml_inference: Optional[MlInferenceResources] = None
         if app_context.config.enable_ml_inference:
-            self.ml_inference = MlInferenceConstruct(
+            self.ml_inference = LambdaMlInferenceConstruct(
                 self,
-                "MlInference",
+                "LambdaMlInference",
                 app_context=app_context,
                 data_plane=self.data_plane,
             ).resources
+            # self.ml_inference = MlInferenceConstruct(
+            #     self,
+            #     "MlInference",
+            #     app_context=app_context,
+            #     data_plane=self.data_plane,
+            # ).resources
         self.api_service: ApiServiceResources = ApiServiceConstruct(
             self,
             "ApiService",

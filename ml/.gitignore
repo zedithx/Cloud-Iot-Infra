@@ -8,3 +8,4 @@ __pycache__/
 output/
 model.tar.gz
 model/model.pth
+model/model.pt

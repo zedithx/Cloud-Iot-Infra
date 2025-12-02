@@ -46,7 +46,7 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
             filename = prediction.get("filename")
             binary_prediction = prediction.get("binary_prediction")
             class_name = prediction.get("class_name")
-            confidence = prediction.get("confidence", 0.0)
+            confidence = Decimal(str(prediction.get("confidence", 0.0)))
 
             if not filename or not binary_prediction:
                 logger.warning(f"Skipping invalid record: {prediction}")
@@ -63,10 +63,13 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
                 "metrics": {
                     "prediction": binary_prediction,
                     "className": class_name,
-                    "diseaseRisk": Decimal(str(confidence)),
+                    "diseaseRisk": confidence,
                     "filename": filename,
                 },
-                "raw": prediction,
+                    "raw": {
+                        **prediction,
+                        "confidence": confidence
+                    },
                 "sourceKey": key,
             }
             TABLE.put_item(Item=item)
