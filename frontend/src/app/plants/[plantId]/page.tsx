@@ -155,13 +155,8 @@ export default function PlantDetailPage() {
         statusTone: "bg-bloom-100 text-bloom-500",
       };
     }
-    const binaryPred = snapshot.binaryPrediction ?? null;
-    const isDiseased = binaryPred
-      ? binaryPred.toLowerCase() !== "healthy"
-      : snapshot.disease === true;
-    const isHealthy = binaryPred
-      ? binaryPred.toLowerCase() === "healthy"
-      : snapshot.disease === false;
+    const isDiseased = snapshot.disease === true;
+    const isHealthy = snapshot.disease === false;
 
     return {
       lastSeen: snapshot.lastSeen
@@ -277,13 +272,10 @@ export default function PlantDetailPage() {
   const waterTankStatus = snapshot?.waterTankEmpty ?? null;
   const isWaterTankEmpty = waterTankStatus === 1;
 
-  // Determine if disease risk is high based on binary_prediction and confidence
-  // High risk only when: binary_prediction indicates disease AND confidence > 80%
-  const binaryPrediction = snapshot?.binaryPrediction ?? null;
+  // Determine if disease risk is high based on disease boolean and confidence
+  // High risk only when: disease is true AND confidence >= 80%
   const confidence = snapshot?.confidence ?? snapshot?.score ?? null;
-  const isDiseased = binaryPrediction
-    ? binaryPrediction.toLowerCase() !== "healthy"
-    : snapshot?.disease === true;
+  const isDiseased = snapshot?.disease === true;
   const isHighDiseaseRisk =
     isDiseased && confidence !== null && confidence >= 0.8;
 
@@ -343,16 +335,25 @@ export default function PlantDetailPage() {
                 isHighDiseaseRisk ? "text-rose-600" : "text-emerald-500"
               }`}
             >
-              Model Confidence
+              Disease Status
             </p>
             <p
-              className={`text-3xl font-semibold ${
+              className={`text-xl font-semibold ${
                 isHighDiseaseRisk ? "text-rose-700" : "text-emerald-900"
               }`}
             >
-              {confidence !== undefined && confidence !== null
-                ? `${Math.round(confidence * 100)}%`
+              {snapshot?.disease !== undefined
+                ? `Leaf: ${snapshot.disease ? "Diseased" : "Healthy"}`
                 : "—"}
+            </p>
+            <p
+              className={`text-sm font-medium ${
+                isHighDiseaseRisk ? "text-rose-600" : "text-emerald-700"
+              }`}
+            >
+              {confidence !== undefined && confidence !== null
+                ? `Confidence: ${Math.round(confidence * 100)}%`
+                : ""}
             </p>
           </div>
           <div
@@ -835,16 +836,10 @@ export default function PlantDetailPage() {
                         .reverse()
                         .slice(0, 12)
                         .map((point) => {
-                          const pointBinaryPred =
-                            point.binaryPrediction ?? null;
                           const pointConfidence =
                             point.confidence ?? point.score ?? null;
-                          const pointIsDiseased = pointBinaryPred
-                            ? pointBinaryPred.toLowerCase() !== "healthy"
-                            : point.disease === true;
-                          const pointIsHealthy = pointBinaryPred
-                            ? pointBinaryPred.toLowerCase() === "healthy"
-                            : point.disease === false;
+                          const pointIsDiseased = point.disease === true;
+                          const pointIsHealthy = point.disease === false;
 
                           return (
                             <tr key={point.timestamp}>
@@ -852,7 +847,11 @@ export default function PlantDetailPage() {
                                 {formatTimestampSGT(point.timestamp, "PPpp")}
                               </td>
                               <td className="px-2 py-2 sm:px-3">
-                                {pointBinaryPred ?? "—"}
+                                {point.disease !== undefined
+                                  ? point.disease
+                                    ? "Diseased"
+                                    : "Healthy"
+                                  : "—"}
                               </td>
                               <td className="px-2 py-2 sm:px-3">
                                 {pointConfidence !== undefined &&
