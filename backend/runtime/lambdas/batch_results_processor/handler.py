@@ -60,16 +60,14 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
             unique_suffix = uuid.uuid4().hex[:6]
             timestamp = f"TS#{iso}-{unique_suffix}"
             
-            # Build metrics dict - only diseaseRisk (simplified, matching telemetry pattern)
             metrics = {
-                "diseaseRisk": confidence,
+                "binary_prediction": binary_prediction,
+                "confidence": confidence,
             }
             
             # Build raw dict (convert values to Decimal for numeric fields)
             raw_data = {
                 **prediction,
-                "confidence": confidence,
-                "diseaseRisk": confidence,
             }
             
             item = {

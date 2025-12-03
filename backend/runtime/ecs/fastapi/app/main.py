@@ -349,23 +349,45 @@ def _normalise_item(item: Dict[str, Any]) -> Dict[str, Any]:
         for key, value in metrics.items():
             if key not in data:  # Don't overwrite existing top-level fields
                 data[key] = value
-        # Handle diseaseRisk from disease records - map to score
-        if "diseaseRisk" in metrics and "score" not in data:
+        # Handle confidence from disease records - map to score
+        if "confidence" in metrics and "score" not in data:
+            confidence_value = metrics.get("confidence")
+            if confidence_value is not None:
+                data["score"] = float(confidence_value)
+                data["confidence"] = float(confidence_value)
+        # Handle binary_prediction from disease records
+        if "binary_prediction" in metrics:
+            data["binaryPrediction"] = metrics.get("binary_prediction")
+        # Handle old diseaseRisk from disease records - map to score (backward compatibility)
+        elif "diseaseRisk" in metrics and "score" not in data:
             disease_risk = metrics.get("diseaseRisk")
             if disease_risk is not None:
                 data["score"] = float(disease_risk)
     
-    # Handle score - could be in metrics (as diseaseRisk) or at top level
+    # Handle score - could be in metrics (as confidence or diseaseRisk) or at top level
     if "score" not in data or data.get("score") is None:
-        # Try to get from metrics.diseaseRisk if it exists
-        if isinstance(metrics, dict) and "diseaseRisk" in metrics:
+        # Try to get from metrics.confidence first (new format)
+        if isinstance(metrics, dict) and "confidence" in metrics:
+            confidence_value = metrics.get("confidence")
+            if confidence_value is not None:
+                data["score"] = float(confidence_value)
+        # Try to get from metrics.diseaseRisk if it exists (old format)
+        elif isinstance(metrics, dict) and "diseaseRisk" in metrics:
             disease_risk = metrics.get("diseaseRisk")
             if disease_risk is not None:
                 data["score"] = float(disease_risk)
     
     score = float(data["score"]) if "score" in data and data["score"] is not None else None
     data["score"] = score
-    data["disease"] = _derive_disease_flag(score, data.get("disease"))
+    
+    # Derive disease flag - prioritize binary_prediction if available
+    if "binaryPrediction" in data and data["binaryPrediction"] is not None:
+        # Use binary_prediction to determine disease status
+        binary_pred = str(data["binaryPrediction"]).lower()
+        data["disease"] = binary_pred != "healthy"
+    else:
+        # Fall back to score-based logic for backward compatibility
+        data["disease"] = _derive_disease_flag(score, data.get("disease"))
     
     # Ensure readingType is set - infer from data if not present
     if "readingType" not in data or data.get("readingType") is None:
