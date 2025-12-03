@@ -26,6 +26,8 @@ export type PlantSnapshot = {
   lastSeen: number;
   score?: number | null;
   disease?: boolean | null;
+  binaryPrediction?: string | null;
+  confidence?: number | null;
   temperatureC?: number | null;
   humidity?: number | null;
   soilMoisture?: number | null;
@@ -38,6 +40,8 @@ export type PlantTimeSeriesPoint = {
   timestamp: number;
   score?: number | null;
   disease?: boolean | null;
+  binaryPrediction?: string | null;
+  confidence?: number | null;
   readingType?: string | null;
   temperatureC?: number | null;
   humidity?: number | null;
