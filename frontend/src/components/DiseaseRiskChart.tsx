@@ -15,13 +15,31 @@ type DiseaseRiskChartProps = {
   points: PlantTimeSeriesPoint[];
 };
 
-type ChartDatum = PlantTimeSeriesPoint & { label: string };
+type ChartDatum = PlantTimeSeriesPoint & { label: string; yValue: number };
 
 function formatPoints(points: PlantTimeSeriesPoint[]): ChartDatum[] {
-  return points.map((point) => ({
-    ...point,
-    label: formatTimestampSGT(point.timestamp, "MMM d, HH:mm"),
-  }));
+  return points.map((point) => {
+    const confidence = Math.max(
+      0,
+      Math.min(1, (point.confidence ?? point.score ?? 0) as number)
+    );
+    // Map to vertical axis: 0 = Disease (high confidence), 0.5 = Uncertain, 1 = Healthy (high confidence)
+    // - Diseased: higher confidence → lower y (towards 0)
+    // - Healthy: higher confidence → higher y (towards 1)
+    // - Unknown disease flag: center at 0.5
+    let yValue = 0.5;
+    if (point.disease === true) {
+      yValue = 0.5 - confidence * 0.5;
+    } else if (point.disease === false) {
+      yValue = 0.5 + confidence * 0.5;
+    }
+
+    return {
+      ...point,
+      label: formatTimestampSGT(point.timestamp, "MMM d, HH:mm"),
+      yValue,
+    };
+  });
 }
 
 export default function DiseaseRiskChart({ points }: DiseaseRiskChartProps) {
@@ -44,12 +62,26 @@ export default function DiseaseRiskChart({ points }: DiseaseRiskChartProps) {
       <div className="h-[18rem] w-full sm:h-80">
         <ResponsiveContainer>
           <LineChart data={data}>
+            <defs>
+              <linearGradient id="statusGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#10b981" stopOpacity={1} />
+                <stop offset="50%" stopColor="#f59e0b" stopOpacity={1} />
+                <stop offset="100%" stopColor="#ef4444" stopOpacity={1} />
+              </linearGradient>
+            </defs>
             <CartesianGrid strokeDasharray="6 6" stroke="#bbf7d0" />
             <XAxis dataKey="label" tick={{ fill: "#047857", fontSize: 12 }} />
             <YAxis
               tick={{ fill: "#047857", fontSize: 12 }}
               domain={[0, 1]}
-              tickFormatter={(value) => `${Math.round(value * 100)}%`}
+              ticks={[0, 0.5, 1]}
+              tickFormatter={(value: number) =>
+                value <= 0.25
+                  ? "Diseased"
+                  : value >= 0.75
+                    ? "Healthy"
+                    : "Uncertain"
+              }
             />
             <Tooltip
               contentStyle={{
@@ -63,18 +95,6 @@ export default function DiseaseRiskChart({ points }: DiseaseRiskChartProps) {
                 color: "#047857",
                 fontWeight: 600,
                 marginBottom: "8px",
-              }}
-              formatter={(value: number | string, name: string, props: any) => {
-                if (name === "confidence") {
-                  return [
-                    `${Math.round((value as number) * 100)}%`,
-                    "Model Confidence",
-                  ];
-                }
-                if (name === "prediction") {
-                  return [value, "Prediction"];
-                }
-                return [value, name];
               }}
               content={({ active, payload, label }) => {
                 if (active && payload && payload.length) {
@@ -119,10 +139,10 @@ export default function DiseaseRiskChart({ points }: DiseaseRiskChartProps) {
             />
             <Line
               type="monotone"
-              dataKey="score"
-              name="Model confidence"
-              stroke="#f97316"
-              strokeWidth={2}
+              dataKey="yValue"
+              name="Status index"
+              stroke="url(#statusGradient)"
+              strokeWidth={3}
               dot={false}
             />
           </LineChart>
