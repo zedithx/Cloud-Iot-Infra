@@ -140,9 +140,6 @@ export default function PlantInfoModal({
               <p className="text-lg font-semibold text-emerald-900 animate-pulse">
                 Loading plant data...
               </p>
-              <p className="text-sm text-emerald-600">
-                Device ID: {deviceId}
-              </p>
             </div>
           </div>
         </div>
@@ -179,15 +176,6 @@ export default function PlantInfoModal({
         </div>
 
         <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-emerald-700 mb-1">
-              Device ID
-            </label>
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 px-4 py-2 text-sm font-mono text-emerald-900">
-              {deviceId}
-            </div>
-          </div>
-
           {isLoading ? (
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 text-center text-sm text-emerald-700">
               Loading plant information...

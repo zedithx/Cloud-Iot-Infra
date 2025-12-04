@@ -27,7 +27,7 @@ export const PLANT_PROFILES: PlantProfile[] = [
       temperatureC: { min: 22, max: 28, unit: "°C" },
       humidity: { min: 55, max: 75, unit: "%" },
       soilMoisture: { min: 0.65, max: 0.85, unit: "%" },
-      lightLux: { min: 10000, max: 20000, unit: "lux" }
+      lightLux: { min: 100, max: 200, unit: "lux" }
     }
   },
   {
@@ -39,7 +39,7 @@ export const PLANT_PROFILES: PlantProfile[] = [
       temperatureC: { min: 18, max: 24, unit: "°C" },
       humidity: { min: 55, max: 70, unit: "%" },
       soilMoisture: { min: 0.55, max: 0.7, unit: "%" },
-      lightLux: { min: 16000, max: 22000, unit: "lux" }
+      lightLux: { min: 100, max: 200, unit: "lux" }
     }
   },
   {
@@ -51,7 +51,7 @@ export const PLANT_PROFILES: PlantProfile[] = [
       temperatureC: { min: 18, max: 24, unit: "°C" },
       humidity: { min: 60, max: 80, unit: "%" },
       soilMoisture: { min: 0.6, max: 0.8, unit: "%" },
-      lightLux: { min: 9000, max: 16000, unit: "lux" }
+      lightLux: { min: 100, max: 200, unit: "lux" }
     }
   },
   {
@@ -63,7 +63,7 @@ export const PLANT_PROFILES: PlantProfile[] = [
       temperatureC: { min: 16, max: 22, unit: "°C" },
       humidity: { min: 60, max: 75, unit: "%" },
       soilMoisture: { min: 0.65, max: 0.9, unit: "%" },
-      lightLux: { min: 8000, max: 15000, unit: "lux" }
+      lightLux: { min: 100, max: 200, unit: "lux" }
     }
   }
 ];

@@ -1,10 +1,40 @@
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
-import { sendActuatorCommand, type ActuatorCommand } from "@/lib/api";
+import { sendActuatorCommand, fetchThresholdRecommendations, type ActuatorCommand } from "@/lib/api";
+import type { PlantProfile } from "@/lib/plantProfiles";
 
 // localStorage key prefix for persisting actuator state
 const getStorageKey = (plantId: string, action: ActionKey, type: "loading" | "cooldown") =>
   `actuator_${plantId}_${action}_${type}`;
+
+// localStorage key for persisting current target values
+const getTargetStorageKey = (plantId: string, metric: MetricKey) =>
+  `target_${plantId}_${metric}`;
+
+// Helper functions to save/load target values from localStorage
+function saveTargetToStorage(plantId: string, metric: MetricKey, value: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    const key = getTargetStorageKey(plantId, metric);
+    localStorage.setItem(key, value.toString());
+  } catch (error) {
+    console.error(`Failed to save target for ${metric}:`, error);
+  }
+}
+
+function loadTargetFromStorage(plantId: string, metric: MetricKey): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const key = getTargetStorageKey(plantId, metric);
+    const stored = localStorage.getItem(key);
+    if (!stored) return null;
+    const value = parseFloat(stored);
+    return isNaN(value) ? null : value;
+  } catch (error) {
+    console.error(`Failed to load target for ${metric}:`, error);
+    return null;
+  }
+}
 
 type ToggleState = "idle" | "pending" | "success" | "error";
 
@@ -12,8 +42,10 @@ type ControlPanelProps = {
   plantId: string;
   plantName?: string;
   profileLabel?: string;
+  selectedProfile?: PlantProfile;
   currentValues?: {
     soilMoisture?: number | null;
+    humidity?: number | null;
     temperatureC?: number | null;
     lightLux?: number | null;
   };
@@ -21,9 +53,64 @@ type ControlPanelProps = {
 
 type ActionKey = "lights" | "pump" | "fan";
 
-const COOLDOWN_SECONDS = 5 * 60; // 5 minutes
-const LOADING_SECONDS = 20; // 20 seconds loading state after command sent
+const LOADING_SECONDS = 5; // 5 seconds loading state after command sent
 
+// Metric-focused configuration (instead of actuator-focused)
+// Focus on soil moisture, temperature, and light lux
+const METRIC_META: Record<
+  "soilMoisture" | "temperatureC" | "lightLux",
+  {
+    label: string;
+    icon: string;
+    accent: string;
+    actuator: "pump" | "fan" | "lights";
+    unit: string;
+    min: number;
+    max: number;
+    step: number;
+    formatValue: (val: number) => number;
+    parseValue: (val: number) => number;
+  }
+> = {
+  soilMoisture: {
+    label: "Soil Moisture",
+    icon: "💧",
+    accent: "from-sky-200 to-sky-100",
+    actuator: "pump",
+    unit: "%",
+    min: 0,
+    max: 100,
+    step: 1,
+    formatValue: (val) => Math.round(val * 100),
+    parseValue: (val) => val / 100,
+  },
+  temperatureC: {
+    label: "Temperature",
+    icon: "🌡️",
+    accent: "from-emerald-200 to-emerald-100",
+    actuator: "fan",
+    unit: "°C",
+    min: 10,
+    max: 40,
+    step: 1,
+    formatValue: (val) => Math.round(val),
+    parseValue: (val) => val,
+  },
+  lightLux: {
+    label: "Light Intensity",
+    icon: "💡",
+    accent: "from-amber-200 to-amber-100",
+    actuator: "lights",
+    unit: "lux",
+    min: 0,
+    max: 100000,
+    step: 100,
+    formatValue: (val) => val,
+    parseValue: (val) => val,
+  },
+};
+
+// Keep ACTION_META for backward compatibility with existing code
 const ACTION_META: Record<
   ActionKey,
   {
@@ -77,41 +164,55 @@ const ACTION_META: Record<
   },
 };
 
+type MetricKey = "soilMoisture" | "temperatureC" | "lightLux";
+
 export default function ControlPanel({
   plantId,
   plantName,
   profileLabel,
+  selectedProfile,
   currentValues = {},
 }: ControlPanelProps) {
-  const [state, setState] = useState<Record<ActionKey, ToggleState>>({
-    lights: "idle",
-    pump: "idle",
-    fan: "idle",
+  // Calculate default target values from plant profile averages
+  const getDefaultTargetValue = (metric: MetricKey): string => {
+    if (!selectedProfile) return "";
+    const profileMetric = selectedProfile.metrics[metric];
+    if (!profileMetric) return "";
+    const average = (profileMetric.min + profileMetric.max) / 2;
+    // Format based on metric type
+    if (metric === "soilMoisture") {
+      // Profile values are in 0-1 range, convert to percentage (0-100) for display
+      return Math.round(average * 100).toString();
+    } else if (metric === "lightLux") {
+      return Math.round(average).toString();
+    } else {
+      // temperatureC - already in °C, round to whole number
+      return Math.round(average).toString();
+    }
+  };
+
+  // State for metrics (soil moisture, temperature, light lux)
+  const [state, setState] = useState<Record<MetricKey, ToggleState>>({
+    soilMoisture: "idle",
+    temperatureC: "idle",
+    lightLux: "idle",
   });
-  const [targetValues, setTargetValues] = useState<Record<ActionKey, string>>({
-    lights: "",
-    pump: "",
-    fan: "",
+  const [targetValues, setTargetValues] = useState<Record<MetricKey, string>>({
+    soilMoisture: getDefaultTargetValue("soilMoisture"),
+    temperatureC: getDefaultTargetValue("temperatureC"),
+    lightLux: getDefaultTargetValue("lightLux"),
   });
-  const [errors, setErrors] = useState<Record<ActionKey, string>>({
-    lights: "",
-    pump: "",
-    fan: "",
+  const [errors, setErrors] = useState<Record<MetricKey, string>>({
+    soilMoisture: "",
+    temperatureC: "",
+    lightLux: "",
   });
-  const [lastActivationTime, setLastActivationTime] = useState<
-    Record<ActionKey, number | null>
-  >({
-    lights: null,
-    pump: null,
-    fan: null,
+  const [currentThresholds, setCurrentThresholds] = useState<Record<MetricKey, number | null>>({
+    soilMoisture: null,
+    temperatureC: null,
+    lightLux: null,
   });
-  const [cooldownRemaining, setCooldownRemaining] = useState<
-    Record<ActionKey, number>
-  >({
-    lights: 0,
-    pump: 0,
-    fan: 0,
-  });
+  const [isLoadingThresholds, setIsLoadingThresholds] = useState(true);
   const [loadingStartTime, setLoadingStartTime] = useState<
     Record<ActionKey, number | null>
   >({
@@ -127,15 +228,166 @@ export default function ControlPanel({
     fan: 0,
   });
 
+  // Update default target values when profile changes (only if no persisted values exist)
+  useEffect(() => {
+    if (selectedProfile) {
+      // Check if we have persisted values first
+      // For soil moisture, if value is <= 1, it's in old format (0-1), convert to percentage
+      const rawSoil = loadTargetFromStorage(plantId, "soilMoisture");
+      const persistedSoil = rawSoil !== null && rawSoil <= 1 ? rawSoil * 100 : rawSoil;
+      // Check for old humidity key first, then temperatureC (for migration)
+      const oldHumidityKey = `target_${plantId}_humidity`;
+      const oldHumidity = typeof window !== "undefined" ? (() => {
+        try {
+          const stored = localStorage.getItem(oldHumidityKey);
+          return stored ? parseFloat(stored) : null;
+        } catch {
+          return null;
+        }
+      })() : null;
+      const persistedTemperature = loadTargetFromStorage(plantId, "temperatureC") ?? oldHumidity;
+      const persistedLight = loadTargetFromStorage(plantId, "lightLux");
+      
+      // Only set defaults if no persisted values exist
+      if (persistedSoil === null && persistedTemperature === null && persistedLight === null) {
+        const getDefault = (metric: MetricKey): string => {
+          const profileMetric = selectedProfile.metrics[metric];
+          if (!profileMetric) return "";
+          const average = (profileMetric.min + profileMetric.max) / 2;
+          if (metric === "soilMoisture") {
+            return average.toFixed(2);
+          } else if (metric === "lightLux") {
+            return Math.round(average).toString();
+          } else {
+            return Math.round(average).toString();
+          }
+        };
+        
+        const defaultValues = {
+          soilMoisture: getDefault("soilMoisture"),
+          temperatureC: getDefault("temperatureC"),
+          lightLux: getDefault("lightLux"),
+        };
+        
+        setTargetValues(defaultValues);
+        
+        // Persist the default values
+        // For soil moisture, defaultValues is already in percentage (from profile min/max which are in 0-1 range, converted to percentage)
+        if (defaultValues.soilMoisture) {
+          // defaultValues.soilMoisture is already in percentage format (0-100)
+          saveTargetToStorage(plantId, "soilMoisture", parseFloat(defaultValues.soilMoisture));
+        }
+        if (defaultValues.temperatureC) {
+          saveTargetToStorage(plantId, "temperatureC", parseFloat(defaultValues.temperatureC));
+        }
+        if (defaultValues.lightLux) {
+          saveTargetToStorage(plantId, "lightLux", parseFloat(defaultValues.lightLux));
+        }
+      } else {
+        // Use persisted values in the target input fields and currentThresholds
+        // For soil moisture, convert from percentage to display value (already handled in persistedSoil conversion above)
+        setTargetValues({
+          soilMoisture: persistedSoil !== null ? Math.round(persistedSoil).toString() : "",
+          temperatureC: persistedTemperature !== null ? Math.round(persistedTemperature).toString() : "",
+          lightLux: persistedLight !== null ? Math.round(persistedLight).toString() : "",
+        });
+        // Also update currentThresholds to show persisted values (already in percentage for soil moisture)
+        setCurrentThresholds({
+          soilMoisture: persistedSoil,
+          temperatureC: persistedTemperature,
+          lightLux: persistedLight,
+        });
+      }
+    }
+  }, [selectedProfile, plantId]);
+
+  // Load current thresholds from localStorage first, then from API
+  useEffect(() => {
+    // First, load from localStorage (persisted values)
+    // For soil moisture, if value is <= 1, it's in old format (0-1), convert to percentage
+    const rawSoil = loadTargetFromStorage(plantId, "soilMoisture");
+    const persistedSoil = rawSoil !== null && rawSoil <= 1 ? rawSoil * 100 : rawSoil;
+    // Check for old humidity key first, then temperatureC (for migration)
+    const oldHumidityKey = `target_${plantId}_humidity`;
+    const oldHumidity = typeof window !== "undefined" ? (() => {
+      try {
+        const stored = localStorage.getItem(oldHumidityKey);
+        return stored ? parseFloat(stored) : null;
+      } catch {
+        return null;
+      }
+    })() : null;
+    const persistedTemperature = loadTargetFromStorage(plantId, "temperatureC") ?? oldHumidity;
+    
+    const persistedThresholds: Record<MetricKey, number | null> = {
+      soilMoisture: persistedSoil,
+      temperatureC: persistedTemperature,
+      lightLux: loadTargetFromStorage(plantId, "lightLux"),
+    };
+    
+    // Always set persisted values immediately (even if null)
+    setCurrentThresholds(persistedThresholds);
+    const hasPersistedValues = Object.values(persistedThresholds).some(v => v !== null);
+    if (hasPersistedValues) {
+      setIsLoadingThresholds(false);
+    }
+    
+    // Then try to fetch from API to update if available
+    async function loadThresholds() {
+      try {
+        if (!hasPersistedValues) {
+          setIsLoadingThresholds(true);
+        }
+        const recommendations = await fetchThresholdRecommendations(plantId, 24);
+        
+        // Map recommendations to metrics
+        const apiThresholds: Record<MetricKey, number | null> = {
+          soilMoisture: null,
+          temperatureC: null,
+          lightLux: null,
+        };
+        
+        recommendations.recommendations.forEach((rec) => {
+          if (rec.actuator === "pump" && rec.currentThreshold !== null && rec.currentThreshold !== undefined) {
+            // API returns soil moisture in 0-1 range, convert to percentage (0-100) for display
+            apiThresholds.soilMoisture = rec.currentThreshold <= 1 ? rec.currentThreshold * 100 : rec.currentThreshold;
+          } else if (rec.actuator === "fan" && rec.currentThreshold !== null && rec.currentThreshold !== undefined) {
+            apiThresholds.temperatureC = rec.currentThreshold;
+          } else if (rec.actuator === "lights" && rec.currentThreshold !== null && rec.currentThreshold !== undefined) {
+            apiThresholds.lightLux = rec.currentThreshold;
+          }
+        });
+        
+        // Merge: use API values if available, otherwise keep persisted values
+        const mergedThresholds: Record<MetricKey, number | null> = {
+          soilMoisture: apiThresholds.soilMoisture ?? persistedThresholds.soilMoisture,
+          temperatureC: apiThresholds.temperatureC ?? persistedThresholds.temperatureC,
+          lightLux: apiThresholds.lightLux ?? persistedThresholds.lightLux,
+        };
+        
+        setCurrentThresholds(mergedThresholds);
+        
+        // Persist any API values that we got (they override localStorage)
+        Object.entries(mergedThresholds).forEach(([metric, value]) => {
+          if (value !== null) {
+            saveTargetToStorage(plantId, metric as MetricKey, value);
+          }
+        });
+      } catch (error) {
+        console.error("Failed to load thresholds from API:", error);
+        // Keep persisted values if API fails
+      } finally {
+        setIsLoadingThresholds(false);
+      }
+    }
+    
+    void loadThresholds();
+  }, [plantId]);
+
   // Load persisted state from localStorage on mount
   useEffect(() => {
     const now = Date.now();
     const loadedLoadingStartTime: Record<ActionKey, number | null> = {
-      lights: null,
-      pump: null,
-      fan: null,
-    };
-    const loadedLastActivationTime: Record<ActionKey, number | null> = {
       lights: null,
       pump: null,
       fan: null,
@@ -157,27 +409,20 @@ export default function ControlPanel({
         }
       }
 
-      // Load cooldown start time
-      const cooldownKey = getStorageKey(plantId, action, "cooldown");
-      const storedCooldown = localStorage.getItem(cooldownKey);
-      if (storedCooldown) {
-        const cooldownStart = parseInt(storedCooldown, 10);
-        const elapsed = Math.floor((now - cooldownStart) / 1000);
-        if (elapsed < COOLDOWN_SECONDS) {
-          // Still in cooldown period
-          loadedLastActivationTime[action] = cooldownStart;
-        } else {
-          // Cooldown completed, clear it
-          localStorage.removeItem(cooldownKey);
-        }
-      }
     });
+    
+    // Also initialize state for metrics
+    const loadedState: Record<MetricKey, ToggleState> = {
+      soilMoisture: "idle",
+      temperatureC: "idle",
+      lightLux: "idle",
+    };
+    setState(loadedState);
 
     setLoadingStartTime(loadedLoadingStartTime);
-    setLastActivationTime(loadedLastActivationTime);
   }, [plantId]);
 
-  // Update loading and cooldown timers every second
+  // Update loading timers every second
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
@@ -185,61 +430,29 @@ export default function ControlPanel({
       // Update loading timers
       setLoadingRemaining((prev) => {
         const updated: Record<ActionKey, number> = { ...prev };
-        (Object.keys(ACTION_META) as ActionKey[]).forEach((action) => {
+        const metricToAction: Record<MetricKey, ActionKey> = {
+          soilMoisture: "pump",
+          temperatureC: "fan",
+          lightLux: "lights",
+        };
+        (Object.keys(METRIC_META) as MetricKey[]).forEach((metric) => {
+          const action = metricToAction[metric];
           const startTime = loadingStartTime[action];
           if (startTime !== null) {
             const elapsed = Math.floor((now - startTime) / 1000);
             const remaining = Math.max(0, LOADING_SECONDS - elapsed);
             updated[action] = remaining;
             
-            // When loading completes, start cooldown
+            // When loading completes, clean up
             if (remaining === 0) {
-              setLastActivationTime((prevTime) => {
-                // Only set if not already set (to avoid overwriting)
-                if (prevTime[action] === null) {
-                  const cooldownKey = getStorageKey(plantId, action, "cooldown");
-                  localStorage.setItem(cooldownKey, now.toString());
-                  return {
-                    ...prevTime,
-                    [action]: now,
-                  };
-                }
-                return prevTime;
-              });
               setLoadingStartTime((prevTime) => {
                 const loadingKey = getStorageKey(plantId, action, "loading");
                 localStorage.removeItem(loadingKey);
-                return {
-                ...prevTime,
-                [action]: null,
-                };
+                  return {
+                    ...prevTime,
+                  [action]: null,
+                  };
               });
-            }
-          } else {
-            updated[action] = 0;
-          }
-        });
-        return updated;
-      });
-      
-      // Update cooldown timers
-      setCooldownRemaining((prev) => {
-        const updated: Record<ActionKey, number> = { ...prev };
-        (Object.keys(ACTION_META) as ActionKey[]).forEach((action) => {
-          const lastTime = lastActivationTime[action];
-          if (lastTime !== null) {
-            const elapsed = Math.floor((now - lastTime) / 1000);
-            const remaining = Math.max(0, COOLDOWN_SECONDS - elapsed);
-            updated[action] = remaining;
-            
-            // Clean up localStorage when cooldown completes
-            if (remaining === 0) {
-              const cooldownKey = getStorageKey(plantId, action, "cooldown");
-              localStorage.removeItem(cooldownKey);
-              setLastActivationTime((prevTime) => ({
-                ...prevTime,
-                [action]: null,
-              }));
             }
           } else {
             updated[action] = 0;
@@ -250,11 +463,11 @@ export default function ControlPanel({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [lastActivationTime, loadingStartTime]);
+  }, [loadingStartTime, plantId]);
 
-  function getCurrentValue(action: ActionKey): number | null {
-    const meta = ACTION_META[action];
-    const rawValue = currentValues[meta.metric];
+  function getCurrentValue(metric: MetricKey): number | null {
+    const meta = METRIC_META[metric];
+    const rawValue = currentValues[metric];
     if (rawValue === null || rawValue === undefined) {
       return null;
     }
@@ -273,11 +486,11 @@ export default function ControlPanel({
 
   function generateRangeOptions(
     currentValue: number,
-    meta: (typeof ACTION_META)[ActionKey]
+    meta: (typeof METRIC_META)[MetricKey]
   ): Array<{ value: string; label: string }> {
     const options: Array<{ value: string; label: string }> = [];
     
-    if (meta.metric === "soilMoisture") {
+    if (meta.actuator === "pump") {
       // Soil moisture: current ± 10%, 20%, 30% in 5% increments
       const currentPercent = currentValue;
       const ranges = [-30, -25, -20, -15, -10, -5, 5, 10, 15, 20, 25, 30];
@@ -290,19 +503,19 @@ export default function ControlPanel({
           });
         }
       });
-    } else if (meta.metric === "temperatureC") {
-      // Temperature: current ± 1°C, 2°C, 3°C, 5°C, 10°C
-      const ranges = [-10, -5, -3, -2, -1, 1, 2, 3, 5, 10];
+    } else if (meta.actuator === "fan") {
+      // Temperature: current ± 2°C, 3°C, 4°C, 5°C
+      const ranges = [-5, -4, -3, -2, 2, 3, 4, 5];
       ranges.forEach((delta) => {
-        const target = currentValue + delta;
-        if (target >= meta.min && target <= meta.max) {
+        const target = Math.max(0, Math.min(100, currentValue + delta));
+        if (target >= 0 && target <= 100) {
           options.push({
             value: target.toFixed(1),
-            label: `${target}°C ${delta > 0 ? `(+${delta}°C)` : `(${delta}°C)`}`,
+            label: `${target}% ${delta > 0 ? `(+${delta}%)` : `(${delta}%)`}`,
           });
         }
       });
-    } else if (meta.metric === "lightLux") {
+    } else if (meta.actuator === "lights") {
       // Light: current ± 10%, 20%, 30%, 50% in 5% increments
       const ranges = [-50, -40, -30, -25, -20, -15, -10, -5, 5, 10, 15, 20, 25, 30, 40, 50];
       ranges.forEach((delta) => {
@@ -330,12 +543,20 @@ export default function ControlPanel({
     return uniqueOptions.sort((a, b) => parseFloat(a.value) - parseFloat(b.value));
   }
 
-  async function trigger(action: ActionKey) {
-    const meta = ACTION_META[action];
-    const targetValueStr = targetValues[action].trim();
+  async function trigger(metric: MetricKey) {
+    const meta = METRIC_META[metric];
+    const targetValueStr = targetValues[metric].trim();
+    
+      // Map metric to action for loading checks
+      const metricToAction: Record<MetricKey, ActionKey> = {
+        soilMoisture: "pump",
+        temperatureC: "fan",
+        lightLux: "lights",
+      };
+      const action = metricToAction[metric];
 
-    // Check cooldown and loading state
-    if (cooldownRemaining[action] > 0 || loadingRemaining[action] > 0) {
+    // Check loading state
+    if (loadingRemaining[action] > 0) {
       return;
     }
 
@@ -364,34 +585,42 @@ export default function ControlPanel({
       return;
     }
 
-    setErrors((prev) => ({ ...prev, [action]: "" }));
-    setState((prev) => ({ ...prev, [action]: "pending" }));
+    setErrors((prev) => ({ ...prev, [metric]: "" }));
+    setState((prev) => ({ ...prev, [metric]: "pending" }));
 
     try {
-      // For soil moisture, if the value is already in 0-1 range (from dropdown), use it directly
-      // Otherwise, parse it (for manual input in percentage)
+      // Parse the value based on metric type
       let parsedValue: number;
-      if (meta.metric === "soilMoisture" && targetValueNum <= 1.0) {
-        // Value is already in 0-1 range (from dropdown)
-        parsedValue = targetValueNum;
+      if (metric === "soilMoisture") {
+        // Soil moisture: input is percentage (0-100), convert to 0-1 range
+        // Round to whole number percentage first
+        const roundedPercent = Math.round(targetValueNum);
+        parsedValue = roundedPercent / 100;
+      } else if (metric === "temperatureC") {
+        // Temperature: input is in °C, round to whole number
+        parsedValue = Math.round(targetValueNum);
       } else {
-        // Value is in percentage or other format, use parseValue
+        // Light lux: use parseValue as-is
         parsedValue = meta.parseValue(targetValueNum);
       }
+      
+      // Map metric to the correct API metric name
+      const metricToApiMetric: Record<MetricKey, "soilMoisture" | "temperatureC" | "lightLux"> = {
+        soilMoisture: "soilMoisture",
+        temperatureC: "temperatureC",
+        lightLux: "lightLux",
+      };
+      
       const command: ActuatorCommand = {
         actuator: action,
         targetValue: parsedValue,
-        metric: meta.metric,
+        metric: metricToApiMetric[metric],
       };
 
       await sendActuatorCommand(plantId, command);
-      setState((prev) => ({ ...prev, [action]: "success" }));
+      setState((prev) => ({ ...prev, [metric]: "success" }));
       
-      // Show success notification
-      const displayValue = meta.formatValue(parsedValue);
-      toast.success(`${meta.icon} ${meta.label} activated! Target: ${displayValue} ${meta.unit}`);
-      
-      // Start loading state (20 seconds)
+      // Start loading state (5 seconds)
       const now = Date.now();
       const loadingKey = getStorageKey(plantId, action, "loading");
       localStorage.setItem(loadingKey, now.toString());
@@ -404,21 +633,49 @@ export default function ControlPanel({
         [action]: LOADING_SECONDS,
       }));
 
-      // After loading completes, cooldown will start automatically via useEffect
+      // Show success notification after loading completes
+      setTimeout(() => {
+        const displayValue = meta.formatValue(parsedValue);
+        // Format display value: whole numbers for temperature and soil moisture, decimals for light lux
+        const formattedDisplayValue = 
+          metric === "temperatureC" || metric === "soilMoisture"
+            ? Math.round(displayValue).toString()
+            : metric === "lightLux"
+            ? Math.round(displayValue).toLocaleString()
+            : displayValue.toFixed(1);
+        const actuatorName = meta.actuator === "pump" ? "Water Pump" : meta.actuator === "fan" ? "Cooling Fan" : "Grow Lights";
+        const deviceName = plantName || plantId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        toast.success(
+          `${meta.label} target (${formattedDisplayValue} ${meta.unit}) set successfully on ${deviceName}. ${actuatorName} activated.`,
+          {
+            duration: 5000,
+            icon: "✅",
+          }
+        );
+      }, LOADING_SECONDS * 1000);
+      
+      // Update current threshold after setting and persist to localStorage
+      // For soil moisture, store as percentage (0-100) in localStorage, but keep parsedValue (0-1) for API
+      const valueToStore = metric === "soilMoisture" ? parsedValue * 100 : parsedValue;
+      setCurrentThresholds((prev) => ({
+        ...prev,
+        [metric]: valueToStore, // Store percentage for display
+      }));
+      saveTargetToStorage(plantId, metric, valueToStore);
       setTimeout(
-        () => setState((prev) => ({ ...prev, [action]: "idle" })),
+        () => setState((prev) => ({ ...prev, [metric]: "idle" })),
         2000
       );
     } catch (error) {
-      setState((prev) => ({ ...prev, [action]: "error" }));
+      setState((prev) => ({ ...prev, [metric]: "error" }));
       const errorMessage = error instanceof Error ? error.message : "Failed to send command";
       setErrors((prev) => ({
         ...prev,
-        [action]: errorMessage,
+        [metric]: errorMessage,
       }));
-      toast.error(`${ACTION_META[action].icon} Failed to activate ${ACTION_META[action].label}: ${errorMessage}`);
+      toast.error(`${meta.icon} Failed to set target value for ${meta.label}: ${errorMessage}`);
       setTimeout(
-        () => setState((prev) => ({ ...prev, [action]: "idle" })),
+        () => setState((prev) => ({ ...prev, [metric]: "idle" })),
         3000
       );
     }
@@ -430,11 +687,11 @@ export default function ControlPanel({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold text-emerald-900 sm:text-xl">
-              Remote actuator control
+              Target Value Control
             </h3>
             <p className="text-xs text-emerald-700/70 sm:text-sm">
-              Set target sensor values to activate actuators for <strong>{plantName || plantId}</strong>.
-              Actuators will run until the sensor reaches the target value.
+              Set target values for soil moisture, temperature, and light intensity for <strong>{plantName || plantId}</strong>.
+              The system will automatically activate actuators to maintain these target values.
             </p>
           </div>
           {profileLabel && (
@@ -446,22 +703,29 @@ export default function ControlPanel({
       </header>
 
       <div className="grid gap-4 md:grid-cols-3 sm:grid-cols-2">
-        {(Object.entries(ACTION_META) as [ActionKey, (typeof ACTION_META)[ActionKey]][]).map(
-          ([action, meta]) => {
-            const status = state[action];
+        {(Object.entries(METRIC_META) as [MetricKey, (typeof METRIC_META)[MetricKey]][]).map(
+          ([metric, meta]) => {
+            const status = state[metric];
             const isPending = status === "pending";
             const isSuccess = status === "success";
             const isError = status === "error";
-            const currentValue = getCurrentValue(action);
-            const error = errors[action];
-            const cooldown = cooldownRemaining[action];
-            const isOnCooldown = cooldown > 0;
+            const currentValue = getCurrentValue(metric);
+            const error = errors[metric];
+            const currentThreshold = currentThresholds[metric];
+            
+            // Map metric to action for loading
+            const metricToAction: Record<MetricKey, ActionKey> = {
+              soilMoisture: "pump",
+              temperatureC: "fan",
+              lightLux: "lights",
+            };
+            const action = metricToAction[metric];
             const loading = loadingRemaining[action];
             const isLoading = loading > 0;
 
             return (
               <div
-                key={action}
+                key={metric}
                 className={`flex flex-col gap-3 rounded-3xl border p-4 shadow transition ${
                   isSuccess
                     ? "border-emerald-400 bg-emerald-50"
@@ -478,94 +742,58 @@ export default function ControlPanel({
                     <h4 className="text-sm font-semibold text-emerald-900 sm:text-base">
                       {meta.label}
                     </h4>
-                    {currentValue !== null && (
-                      <p className="text-xs text-emerald-700">
-                        Current: {currentValue.toFixed(meta.metric === "lightLux" ? 0 : 1)}{" "}
-                        {meta.unit}
+                    {currentThreshold !== null && (
+                      <p className="text-xs text-emerald-600 font-medium">
+                        Current target: {
+                          metric === "lightLux" 
+                            ? Math.round(currentThreshold).toFixed(0)
+                            : metric === "temperatureC" || metric === "soilMoisture"
+                            ? Math.round(currentThreshold).toFixed(0)
+                            : currentThreshold.toFixed(1)
+                        } {meta.unit}
                       </p>
                     )}
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  {/* Show which metric is being controlled */}
-                  <div className="flex items-center gap-2 text-xs text-emerald-600">
-                    <span className="font-medium">Controlling:</span>
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5">
-                      {meta.metric === "soilMoisture" && "Soil Moisture"}
-                      {meta.metric === "temperatureC" && "Temperature"}
-                      {meta.metric === "lightLux" && "Light Intensity"}
-                    </span>
-                  </div>
-                  
                   {/* Range selector based on current value */}
-                  {currentValue !== null ? (
-                    <div className="space-y-2">
-                      <label className="text-xs font-medium text-emerald-700">
-                        Select target value (current: {currentValue.toFixed(meta.metric === "lightLux" ? 0 : 1)} {meta.unit})
-                      </label>
-                      <select
-                        value={targetValues[action]}
-                        onChange={(e) =>
-                          setTargetValues((prev) => ({
-                            ...prev,
-                            [action]: e.target.value,
-                          }))
-                        }
-                        disabled={isPending || isLoading || isOnCooldown}
-                        className="w-full rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-500"
-                      >
-                        <option value="">Select target value...</option>
-                        {generateRangeOptions(currentValue, meta).map((option, index) => (
-                          <option key={`${option.value}-${index}`} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <label className="text-xs font-medium text-emerald-700">
-                        Target {meta.unit}
-                      </label>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-emerald-700">
+                      Set target value:
+                    </label>
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
                       min={meta.min}
                       max={meta.max}
                       step={meta.step}
-                      value={targetValues[action]}
+                        value={targetValues[metric]}
                       onChange={(e) =>
                         setTargetValues((prev) => ({
                           ...prev,
-                          [action]: e.target.value,
+                            [metric]: e.target.value,
                         }))
                       }
                       placeholder={`Target ${meta.unit}`}
-                      disabled={isPending || isLoading || isOnCooldown}
+                        disabled={isPending || isLoading}
                       className="flex-1 rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm text-emerald-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-500"
                     />
                     <span className="text-xs text-emerald-600">{meta.unit}</span>
-                  </div>
                     </div>
-                  )}
+                  </div>
                   {error && (
                     <p className="text-xs text-rose-600">{error}</p>
                   )}
                   {isLoading && (
                     <p className="text-xs text-blue-600 font-medium">
-                      Processing: {formatCooldown(loading)}
-                    </p>
-                  )}
-                  {!isLoading && isOnCooldown && (
-                    <p className="text-xs text-amber-600 font-medium">
-                      Cooldown: {formatCooldown(cooldown)}
+                      Setting target value on device: {formatCooldown(loading)}
                     </p>
                   )}
                   <button
                     type="button"
-                    onClick={() => trigger(action)}
-                    disabled={isPending || isLoading || isOnCooldown}
+                    onClick={() => trigger(metric)}
+                    disabled={isPending || isLoading}
                     className={`w-full rounded-full px-4 py-2 text-sm font-semibold transition ${
                       isSuccess && !isLoading
                         ? "bg-emerald-500 text-white"
@@ -573,17 +801,14 @@ export default function ControlPanel({
                           ? "bg-rose-500 text-white"
                           : isLoading
                             ? "bg-blue-200 text-blue-700 cursor-wait"
-                            : isOnCooldown
-                              ? "bg-slate-200 text-slate-500 cursor-not-allowed"
                               : "bg-white text-emerald-700 hover:bg-emerald-50 disabled:cursor-wait disabled:opacity-50"
                     }`}
                   >
-                    {isLoading && `Processing: ${formatCooldown(loading)}`}
-                    {!isLoading && isOnCooldown && `Cooldown: ${formatCooldown(cooldown)}`}
-                    {!isLoading && !isOnCooldown && status === "idle" && "Activate"}
-                    {!isLoading && !isOnCooldown && isPending && "Sending..."}
-                    {!isLoading && !isOnCooldown && isSuccess && "Command sent!"}
-                    {!isLoading && !isOnCooldown && isError && "Failed"}
+                    {isLoading && `Setting target value on device: ${formatCooldown(loading)}`}
+                    {!isLoading && status === "idle" && "Set Target Value"}
+                    {!isLoading && isPending && "Setting..."}
+                    {!isLoading && isSuccess && "Target Set!"}
+                    {!isLoading && isError && "Failed"}
                   </button>
                 </div>
               </div>

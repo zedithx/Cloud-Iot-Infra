@@ -294,13 +294,6 @@ export default function PlantDetailPage() {
               <span aria-hidden>🎈</span> Demo mode
             </span>
           )}
-          <button
-            type="button"
-            onClick={refresh}
-            className="rounded-full border border-emerald-200 bg-sprout-100 px-4 py-1.5 text-xs font-medium text-emerald-700 hover:bg-sprout-200 sm:text-sm"
-          >
-            Refresh plant
-          </button>
         </div>
       </nav>
 
@@ -561,12 +554,16 @@ export default function PlantDetailPage() {
 
         <div className="grid gap-3 sm:grid-cols-2">
           {metricComparisons.map((metric) => {
-            const statusStyles: Record<typeof metric.status, string> = {
+            const statusStyles: Record<
+              typeof metric.status,
+              string
+            > = {
               ideal:
                 "bg-emerald-100 text-emerald-700 border border-emerald-200",
               low: "bg-amber-100 text-amber-700 border border-amber-200",
               high: "bg-rose-100 text-rose-700 border border-rose-200",
-              unknown: "bg-slate-100 text-slate-500 border border-slate-200",
+              unknown:
+                "bg-slate-100 text-slate-500 border border-slate-200"
             };
             const statusLabel: Record<typeof metric.status, string> = {
               ideal: "Within range",
@@ -734,8 +731,10 @@ export default function PlantDetailPage() {
               plantId={plantId}
               plantName={displayName}
               profileLabel={selectedProfile.label}
+              selectedProfile={selectedProfile}
               currentValues={{
                 soilMoisture: snapshot.soilMoisture,
+                humidity: snapshot.humidity,
                 temperatureC: snapshot.temperatureC,
                 lightLux: snapshot.lightLux,
               }}
@@ -754,28 +753,37 @@ export default function PlantDetailPage() {
                   <span aria-hidden>📋</span>
                   Recent readings
                 </h3>
-                <div className="flex gap-2 rounded-full border border-emerald-200 bg-emerald-50 p-1">
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-2 rounded-full border border-emerald-200 bg-emerald-50 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setRecentReadingsTab("metrics")}
+                      className={`rounded-full px-4 py-1.5 text-xs font-medium transition sm:text-sm ${
+                        recentReadingsTab === "metrics"
+                          ? "bg-emerald-500 text-white shadow-sm"
+                          : "text-emerald-700 hover:bg-emerald-100"
+                      }`}
+                    >
+                      Metrics
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRecentReadingsTab("disease")}
+                      className={`rounded-full px-4 py-1.5 text-xs font-medium transition sm:text-sm ${
+                        recentReadingsTab === "disease"
+                          ? "bg-emerald-500 text-white shadow-sm"
+                          : "text-emerald-700 hover:bg-emerald-100"
+                      }`}
+                    >
+                      Disease
+                    </button>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setRecentReadingsTab("metrics")}
-                    className={`rounded-full px-4 py-1.5 text-xs font-medium transition sm:text-sm ${
-                      recentReadingsTab === "metrics"
-                        ? "bg-emerald-500 text-white shadow-sm"
-                        : "text-emerald-700 hover:bg-emerald-100"
-                    }`}
+                    onClick={refresh}
+                    className="rounded-full border border-emerald-200 bg-sprout-100 px-4 py-1.5 text-xs font-medium text-emerald-700 hover:bg-sprout-200 sm:text-sm"
                   >
-                    Metrics
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRecentReadingsTab("disease")}
-                    className={`rounded-full px-4 py-1.5 text-xs font-medium transition sm:text-sm ${
-                      recentReadingsTab === "disease"
-                        ? "bg-emerald-500 text-white shadow-sm"
-                        : "text-emerald-700 hover:bg-emerald-100"
-                    }`}
-                  >
-                    Disease
+                    Refresh
                   </button>
                 </div>
               </div>

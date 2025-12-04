@@ -30,17 +30,18 @@ function getPlantTypeEmoji(plantId: string): string {
 }
 
 function statusLabel(plant: PlantSnapshot): { label: string; tone: string; emoji: string } {
-  if (plant.disease === true) {
-    return { 
-      label: "Needs attention", 
-      tone: "bg-rose-100 text-rose-600",
-      emoji: "🌧️"
-    };
-  }
-  
   // Always show plant type with emoji, regardless of disease status
   const plantTypeLabel = getPlantTypeLabel(plant.plantId);
   const plantEmoji = getPlantTypeEmoji(plant.plantId);
+  
+  if (plant.disease === true) {
+    // In danger - show plant type with red/mint red background
+    return { 
+      label: plantTypeLabel, 
+      tone: "bg-rose-100 text-rose-600",
+      emoji: plantEmoji
+    };
+  }
   
   if (plant.disease === false) {
     // Healthy - show plant type with emoji

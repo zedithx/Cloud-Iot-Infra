@@ -45,6 +45,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import boto3
 
@@ -91,6 +92,7 @@ def generate_telemetry_data(
     high_temp: bool = False,
     high_humidity: bool = False,
     water_tank_empty: bool = False,
+    set_threshold: Optional[str] = None,
 ) -> dict:
     """Generate telemetry data for a device with optional threshold testing flags."""
     data = {
@@ -104,7 +106,7 @@ def generate_telemetry_data(
         data["temperatureC"] = round(random.uniform(12.0, 18.0), 1)
     elif high_temp:
         # High temperature for trend testing: ~35°C
-        data["temperatureC"] = round(random.uniform(33.0, 37.0), 1)
+        data["temperatureC"] = round(50.0, 1)
     else:
         # Normal temperature with variation
         temp_variation = random.uniform(-2.0, 3.0)
@@ -147,6 +149,34 @@ def generate_telemetry_data(
         data["waterTankFilled"] = 0  # Tank is empty (not filled)
     else:
         data["waterTankFilled"] = 1  # Tank has water (filled)
+    
+    # Set threshold if specified (format: "metric=value", e.g., "temperatureC=33")
+    if set_threshold:
+        try:
+            metric, value_str = set_threshold.split("=", 1)
+            value = float(value_str)
+            
+            # Map metric names to threshold keys (as stored in DynamoDB)
+            threshold_key_map = {
+                "temperatureC": "temperatureCThreshold",
+                "soilMoisture": "soilMoistureThreshold",
+                "lightLux": "lightLuxThreshold",
+            }
+            
+            threshold_key = threshold_key_map.get(metric)
+            if threshold_key:
+                # Store threshold in the format expected by stream_processor
+                # stream_processor's _persist_device_config stores threshold dict as-is
+                # The threshold dict will be stored in DynamoDB config item
+                data["threshold"] = {
+                    threshold_key: value
+                }
+                print(f"   📊 Will set {metric} threshold to {value} ({threshold_key})")
+            else:
+                raise ValueError(f"Unknown metric '{metric}'. Supported: {list(threshold_key_map.keys())}")
+        except (ValueError, AttributeError) as e:
+            print(f"   ⚠️  Invalid threshold format '{set_threshold}': {e}")
+            print(f"   Expected format: 'metric=value' (e.g., 'temperatureC=33')")
     
     return data
 
@@ -210,6 +240,11 @@ Examples:
         "--water-tank-empty",
         action="store_true",
         help="Send waterTankEmpty=1 (tank is empty)",
+    )
+    parser.add_argument(
+        "--set-threshold",
+        type=str,
+        help="Set threshold for a metric. Format: 'metric=value' (e.g., 'temperatureC=33')",
     )
     
     # Device and count options
@@ -283,6 +318,7 @@ def main():
             high_temp=args.high_temperature,
             high_humidity=args.high_humidity,
             water_tank_empty=args.water_tank_empty,
+            set_threshold=args.set_threshold,
         )
         
         publish_telemetry_message(iot_data_client, args.device_id, telemetry)

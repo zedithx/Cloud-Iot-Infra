@@ -82,15 +82,6 @@ export default function EditPlantModal({
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-emerald-700 mb-1">
-              Device ID
-            </label>
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 px-4 py-2 text-sm font-mono text-emerald-900">
-              {deviceId}
-            </div>
-          </div>
-
-          <div>
             <label
               htmlFor="edit-plant-name"
               className="block text-sm font-medium text-emerald-700 mb-1"
