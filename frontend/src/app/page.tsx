@@ -75,18 +75,30 @@ export default function HomePage() {
       try {
         const plantName = getPlantName(plantToDelete) || plantToDelete.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
         console.info("[handleConfirmDelete] Removing plant:", plantToDelete);
-        await removeScannedPlant(plantToDelete);
-        console.info("[handleConfirmDelete] Plant removed, refreshing list...");
+        
+        // Close modal first
         setIsDeleteModalOpen(false);
+        const deviceIdToDelete = plantToDelete;
         setPlantToDelete(null);
-        toast.success(`🗑️ Plant "${plantName}" removed from your list`);
-        // Refresh immediately - removeScannedPlant already synced localStorage
+        
+        // Remove from backend and localStorage
+        await removeScannedPlant(deviceIdToDelete);
+        console.info("[handleConfirmDelete] Plant removed from backend/localStorage");
+        
+        // Add a small delay to ensure backend has processed the deletion
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Refresh the list with cache-busting
         await refresh();
         console.info("[handleConfirmDelete] List refreshed");
+        
+        toast.success(`🗑️ Plant "${plantName}" removed from your list`);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to remove plant";
         toast.error(`Failed to remove plant: ${message}`);
         console.error("Error removing plant:", err);
+        // Refresh anyway to try to sync state
+        await refresh();
       }
     }
   };

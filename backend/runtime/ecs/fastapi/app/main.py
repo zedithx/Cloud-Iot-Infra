@@ -226,25 +226,25 @@ PLANT_TYPE_METRICS: Dict[str, Dict[str, Dict[str, float]]] = {
         "temperatureC": {"min": 22.0, "max": 28.0},
         "humidity": {"min": 55.0, "max": 75.0},
         "soilMoisture": {"min": 0.65, "max": 0.85},
-        "lightLux": {"min": 10000.0, "max": 20000.0},
+        "lightLux": {"min": 100.0, "max": 200.0},
     },
     "strawberry": {
         "temperatureC": {"min": 18.0, "max": 24.0},
         "humidity": {"min": 55.0, "max": 70.0},
         "soilMoisture": {"min": 0.55, "max": 0.7},
-        "lightLux": {"min": 16000.0, "max": 22000.0},
+        "lightLux": {"min": 100.0, "max": 200.0},
     },
     "mint": {
         "temperatureC": {"min": 18.0, "max": 24.0},
         "humidity": {"min": 60.0, "max": 80.0},
         "soilMoisture": {"min": 0.6, "max": 0.8},
-        "lightLux": {"min": 9000.0, "max": 16000.0},
+        "lightLux": {"min": 100.0, "max": 200.0},
     },
     "lettuce": {
         "temperatureC": {"min": 16.0, "max": 22.0},
         "humidity": {"min": 60.0, "max": 75.0},
         "soilMoisture": {"min": 0.65, "max": 0.9},
-        "lightLux": {"min": 8000.0, "max": 15000.0},
+        "lightLux": {"min": 100.0, "max": 200.0},
     },
 }
 
@@ -1054,24 +1054,50 @@ def remove_scanned_plant(device_id: str) -> None:
     Remove a scanned plant from the user's list.
     Note: DynamoDB table expects timestamp as STRING, so we convert the hash to string.
     FastAPI automatically URL-decodes path parameters.
+    This function queries all USER_PLANTS records to find the one with matching deviceId
+    in the plantName field, then deletes using that record's actual timestamp key.
+    This ensures deletion works even if the hash function changed or there were collisions.
     """
     logger = logging.getLogger(__name__)
     try:
         # FastAPI automatically URL-decodes the device_id from the path
         logger.info("Removing scanned plant: deviceId=%s", device_id)
         
-        # Convert deviceId to numeric timestamp, then to string (DynamoDB expects STRING)
-        timestamp_key_int = _device_id_to_timestamp(device_id)
-        timestamp_key = str(timestamp_key_int)  # Convert to string for DynamoDB
-        logger.debug("Converted deviceId to timestamp key: %s -> %s (string)", device_id, timestamp_key)
+        # Query all USER_PLANTS records to find the one with matching deviceId
+        # This ensures we find the record even if hash function changed or there was a collision
+        response = telemetry_table.query(
+            KeyConditionExpression=Key("deviceId").eq("USER_PLANTS")
+        )
         
+        # Look for existing record with matching deviceId in plantName field
+        timestamp_key_to_delete = None
+        for item in response.get("Items", []):
+            plant_name_full = item.get("plantName", "")
+            if "|" in plant_name_full:
+                parts = plant_name_full.split("|", 1)
+                if len(parts) >= 1 and parts[0] == device_id:
+                    # Found existing record for this deviceId
+                    timestamp_key_to_delete = item.get("timestamp")
+                    logger.info("Found record to delete for deviceId=%s (timestamp_key=%s)", 
+                               device_id, timestamp_key_to_delete)
+                    break
+        
+        if timestamp_key_to_delete is None:
+            # Try fallback: use hash-based timestamp key (for backward compatibility)
+            timestamp_key_int = _device_id_to_timestamp(device_id)
+            timestamp_key_to_delete = str(timestamp_key_int)
+            logger.warning("No record found with deviceId=%s in plantName, trying hash-based key: %s", 
+                          device_id, timestamp_key_to_delete)
+        
+        # Delete the item using the found timestamp key
         telemetry_table.delete_item(
             Key={
                 "deviceId": "USER_PLANTS",
-                "timestamp": timestamp_key,  # Must be string per table schema
+                "timestamp": timestamp_key_to_delete,  # Must be string per table schema
             }
         )
-        logger.info("Successfully removed scanned plant: deviceId=%s", device_id)
+        logger.info("Successfully removed scanned plant: deviceId=%s (timestamp_key=%s)", 
+                   device_id, timestamp_key_to_delete)
     except Exception as e:
         logger.error("Failed to remove scanned plant: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to remove scanned plant")

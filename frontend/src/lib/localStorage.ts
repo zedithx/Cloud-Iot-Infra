@@ -124,9 +124,10 @@ export async function removeScannedPlant(deviceId: string): Promise<void> {
       
       // After successful backend removal, refresh from backend to ensure sync
       // This ensures localStorage matches backend state
-      // Add a small delay to ensure backend has processed the deletion
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Add a delay to ensure backend has processed the deletion
+      await new Promise(resolve => setTimeout(resolve, 500));
       try {
+        // Force refresh with cache-busting timestamp
         const updatedPlants = await fetchScannedPlants();
         if (typeof window !== "undefined") {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedPlants));
