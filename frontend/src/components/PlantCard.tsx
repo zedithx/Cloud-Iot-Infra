@@ -195,15 +195,64 @@ export default function PlantCard({ plant, onRemove, onEdit }: PlantCardProps) {
             </div>
           </div>
         </div>
-        <div className="mt-auto flex items-center justify-between pt-4 text-sm font-medium text-emerald-700">
-          <span>
-            Disease probability:{" "}
-            <strong className="text-emerald-900">
-              {plant.score !== undefined && plant.score !== null
-                ? `${Math.round(plant.score * 100)}%`
-                : "unknown"}
-            </strong>
-          </span>
+        <div className="mt-auto flex items-center justify-between pt-4">
+          <div className="flex items-center gap-2">
+            {(() => {
+              // Get label from binaryPrediction or derive from disease boolean
+              const label = plant.binaryPrediction 
+                ? plant.binaryPrediction 
+                : plant.disease === true 
+                  ? "Diseased" 
+                  : plant.disease === false 
+                    ? "Healthy" 
+                    : "Unknown";
+              
+              // Get confidence from confidence field or fallback to score
+              const confidence = plant.confidence !== undefined && plant.confidence !== null
+                ? plant.confidence
+                : plant.score !== undefined && plant.score !== null
+                  ? plant.score
+                  : null;
+              
+              const isDiseased = label.toLowerCase() === "diseased" || plant.disease === true;
+              const isHealthy = label.toLowerCase() === "healthy" || plant.disease === false;
+              
+              if (confidence !== null) {
+                return (
+                  <>
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
+                      isDiseased 
+                        ? "bg-rose-100 text-rose-700" 
+                        : isHealthy 
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-slate-100 text-slate-600"
+                    }`}>
+                      <span aria-hidden>
+                        {isDiseased ? "⚠️" : isHealthy ? "✅" : "❓"}
+                      </span>
+                      <span className="font-medium">{label}</span>
+                      <span className="opacity-75">{Math.round(confidence * 100)}%</span>
+                    </span>
+                  </>
+                );
+              }
+              
+              return (
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
+                  isDiseased 
+                    ? "bg-rose-100 text-rose-700" 
+                    : isHealthy 
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-slate-100 text-slate-600"
+                }`}>
+                  <span aria-hidden>
+                    {isDiseased ? "⚠️" : isHealthy ? "✅" : "❓"}
+                  </span>
+                  <span>{label}</span>
+                </span>
+              );
+            })()}
+          </div>
           <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 shadow transition group-hover:bg-emerald-500 group-hover:text-white sm:h-11 sm:w-11">
             →
           </span>

@@ -18,6 +18,7 @@ sns_client = boto3.client("sns")
 
 TELEMETRY_READING = "telemetry"
 DISEASE_READING = "disease"
+USER_PLANTS_DEVICE_ID = "USER_PLANTS"
 
 ENVIRONMENT_KEYS = {
     "temperature": {"temperature", "temperatureC", "temperature_c"},
@@ -34,26 +35,73 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     trend_window_start = now - timedelta(hours=TREND_WINDOW_HOURS)
     
     alerts: List[Dict[str, Any]] = []
+    resolutions: List[Dict[str, Any]] = []
     device_ids = _list_device_ids()
+    
+    # Load previous alert states for resolution detection
+    previous_states = _load_previous_alert_states()
+    
+    # Track new states to save at the end
+    new_states: Dict[str, Dict[str, bool]] = {}
 
     for device_id in device_ids:
+        # Skip USER_PLANTS device ID itself
+        if device_id == USER_PLANTS_DEVICE_ID:
+            continue
+            
+        plant_name = _get_plant_name(device_id)
+        
+        # Check current alert states (before generating alerts)
+        has_disease = _check_disease_label(device_id, window_start, now) is not None
+        has_water_tank_empty = _check_water_tank_status(device_id, now) is not None
+        trend_alerts_list = _check_unusual_trends(device_id, trend_window_start, now)
+        has_trends = len(trend_alerts_list) > 0
+        
+        current_states = {
+            "disease": has_disease,
+            "water_tank_empty": has_water_tank_empty,
+            "trends": has_trends,
+        }
+        
+        # Check for resolutions (previous alert cleared)
+        device_key = device_id
+        if device_key in previous_states:
+            prev = previous_states[device_key]
+            # Disease resolution
+            if prev.get("disease") and not current_states["disease"]:
+                resolutions.append(_publish_resolution(device_id, plant_name, "disease", now))
+            # Water tank resolution
+            if prev.get("water_tank_empty") and not current_states["water_tank_empty"]:
+                resolutions.append(_publish_resolution(device_id, plant_name, "water_tank_empty", now))
+            # Trends resolution
+            if prev.get("trends") and not current_states["trends"]:
+                resolutions.append(_publish_resolution(device_id, plant_name, "trends", now))
+        
         # Check for disease label (triggers alert regardless of confidence/score)
-        disease_alert = _check_disease_label(device_id, window_start, now)
+        # Pass plant_name so it can be included in the alert
+        disease_alert = _check_disease_label(device_id, window_start, now, plant_name)
         if disease_alert:
             alerts.append(disease_alert)
         
         # Check unusual trends/spiking trends
-        trend_alerts = _check_unusual_trends(device_id, trend_window_start, now)
-        alerts.extend(trend_alerts)
+        trend_alerts_list = _check_unusual_trends(device_id, trend_window_start, now, plant_name)
+        alerts.extend(trend_alerts_list)
         
         # Check water tank status
-        water_tank_alert = _check_water_tank_status(device_id, now)
+        water_tank_alert = _check_water_tank_status(device_id, now, plant_name)
         if water_tank_alert:
             alerts.append(water_tank_alert)
+        
+        # Store current state for next evaluation
+        new_states[device_id] = current_states
+    
+    # Save all states at once
+    _save_alert_states(new_states)
 
     return {
         "statusCode": 200,
         "alertsSent": len(alerts),
+        "resolutionsSent": len(resolutions),
         "devicesEvaluated": len(device_ids),
     }
 
@@ -74,9 +122,121 @@ def _list_device_ids() -> List[str]:
     return sorted(device_ids)
 
 
+def _get_plant_name(device_id: str) -> str:
+    """Get plant name from USER_PLANTS table, fallback to device ID if not found."""
+    try:
+        response = table.query(
+            KeyConditionExpression=Key("deviceId").eq(USER_PLANTS_DEVICE_ID)
+        )
+        
+        for item in response.get("Items", []):
+            plant_name_full = item.get("plantName", "")
+            if "|" in plant_name_full:
+                parts = plant_name_full.split("|", 1)
+                if len(parts) >= 1 and parts[0] == device_id:
+                    # Found the plant name
+                    if len(parts) >= 2 and parts[1]:
+                        return parts[1]
+                    return device_id  # Fallback if name is empty
+        
+        # Not found in USER_PLANTS, return device ID
+        return device_id
+    except Exception:
+        # On any error, return device ID as fallback
+        return device_id
 
 
-def _check_disease_label(device_id: str, window_start: datetime, window_end: datetime) -> Optional[Dict[str, Any]]:
+def _load_previous_alert_states() -> Dict[str, Dict[str, bool]]:
+    """Load previous alert states from a simple in-memory cache or DynamoDB."""
+    # For simplicity, we'll use a DynamoDB item to store previous states
+    # Using a single item with deviceId="ALERT_STATES" and timestamp="CURRENT"
+    try:
+        response = table.get_item(
+            Key={
+                "deviceId": "ALERT_STATES",
+                "timestamp": "CURRENT"
+            }
+        )
+        if "Item" in response:
+            states = response["Item"].get("states", {})
+            return states if isinstance(states, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_alert_states(states: Dict[str, Dict[str, bool]]) -> None:
+    """Save current alert states for resolution detection."""
+    try:
+        table.put_item(
+            Item={
+                "deviceId": "ALERT_STATES",
+                "timestamp": "CURRENT",
+                "states": states,
+            }
+        )
+    except Exception:
+        # Fail silently - resolution detection is optional
+        pass
+
+
+def _publish_resolution(device_id: str, plant_name: str, alert_type: str, now: datetime) -> Dict[str, Any]:
+    """Publish resolution notification when alert condition is cleared."""
+    alert_type_labels = {
+        "disease": "Disease",
+        "water_tank_empty": "Water Tank Empty",
+        "trends": "Unusual Trends",
+    }
+    
+    label = alert_type_labels.get(alert_type, alert_type.replace("_", " ").title())
+    subject = f"✅ Resolved: {label} - {plant_name}"
+    
+    body_text = f"""Plant: {plant_name}
+Device ID: {device_id}
+
+✅ ALERT RESOLVED
+
+The {label.lower()} condition has been cleared.
+
+The plant is now back to normal operating conditions.
+
+Resolved at: {now.isoformat()}
+"""
+    
+    body_html = f"""
+    <p><strong>Plant:</strong> {plant_name}</p>
+    <p><strong>Device ID:</strong> {device_id}</p>
+    <p><strong style="color: green;">✅ ALERT RESOLVED</strong></p>
+    <p>The {label.lower()} condition has been cleared.</p>
+    <p>The plant is now back to normal operating conditions.</p>
+    <p><strong>Resolved at:</strong> {now.isoformat()}</p>
+    """
+    
+    payload = {
+        "deviceId": device_id,
+        "plantName": plant_name,
+        "alertType": alert_type,
+        "resolution": True,
+        "resolvedAt": now.isoformat(),
+    }
+    
+    message = {
+        "subject": subject,
+        "bodyText": body_text,
+        "bodyHtml": body_html,
+        "payload": payload,
+    }
+    
+    sns_client.publish(
+        TopicArn=SNS_TOPIC_ARN,
+        Message=json.dumps(message),
+    )
+    return message
+
+
+
+
+def _check_disease_label(device_id: str, window_start: datetime, window_end: datetime, plant_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Check if latest disease record has label='disease' and trigger alert regardless of confidence/score."""
     # Query all records for this device, then filter by readingType
     resp = table.query(
@@ -101,18 +261,31 @@ def _check_disease_label(device_id: str, window_start: datetime, window_end: dat
     label = (
         latest.get("label") or 
         latest.get("metrics", {}).get("label") or 
-        latest.get("raw", {}).get("label") or
-        latest.get("metrics", {}).get("binary_prediction")
+        latest.get("raw", {}).get("label")
     )
     
-    # Convert binary_prediction to label format if needed
+    # If no explicit label, check binary_prediction
     if label is None:
         binary_pred = latest.get("metrics", {}).get("binary_prediction") or latest.get("raw", {}).get("binary_prediction")
         if binary_pred:
-            label = "disease" if str(binary_pred).lower() != "healthy" else "healthy"
+            # Convert binary_prediction to normalized label format
+            # "Diseased", "diseased", "Disease" -> "disease"
+            # "Healthy", "healthy" -> "healthy"
+            binary_pred_str = str(binary_pred).lower()
+            if binary_pred_str in ["diseased", "disease"]:
+                label = "disease"
+            elif binary_pred_str == "healthy":
+                label = "healthy"
+            else:
+                # Default: if not "healthy", treat as "disease"
+                label = "disease"
     
-    # Trigger alert if label is "disease" (regardless of confidence/score)
-    if label and str(label).lower() == "disease":
+    # Normalize label to lowercase for comparison
+    # Handle both "disease" and "diseased" as valid disease labels
+    normalized_label = str(label).lower() if label else None
+    
+    # Trigger alert if label indicates disease (handles both "disease" and "diseased")
+    if normalized_label and (normalized_label == "disease" or normalized_label == "diseased"):
         metrics = latest.get("metrics", {})
         score = metrics.get("diseaseRisk") or metrics.get("confidence")
         disease_score = None
@@ -121,14 +294,17 @@ def _check_disease_label(device_id: str, window_start: datetime, window_end: dat
             disease_score = float(decimal_score) if decimal_score is not None else None
         
         env_averages = _compute_environment_averages(device_id, window_start, window_end)
+        alert_data = {
+            "label": str(label),
+            "diseaseRisk": disease_score,
+            "environmentAverages": env_averages,
+        }
+        if plant_name:
+            alert_data["plantName"] = plant_name
         return _publish_alert(
             device_id,
             "disease_detected",
-            {
-                "label": str(label),
-                "diseaseRisk": disease_score,
-                "environmentAverages": env_averages,
-            },
+            alert_data,
             window_end,
         )
     
@@ -175,6 +351,7 @@ def _check_unusual_trends(
     device_id: str,
     window_start: datetime,
     window_end: datetime,
+    plant_name: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Check for unusual trends (rapid changes) in environmental conditions."""
     alerts = []
@@ -201,48 +378,57 @@ def _check_unusual_trends(
     
     # Check for rapid temperature increase (>3°C/hour or >7°C in 3 hours)
     if trends.get("temperature_trend") in ["increasing_very_rapidly", "increasing_rapidly"]:
+        alert_data = {
+            "trend": trends.get("temperature_trend"),
+            "rate": trends.get("temperature_rate", 0),
+            "start": trends.get("temperature_start"),
+            "end": trends.get("temperature_end"),
+            "period_hours": trends.get("temperature_period_hours", 0),
+        }
+        if plant_name:
+            alert_data["plantName"] = plant_name
         alert_message = _publish_alert(
             device_id,
             "unusual_temperature_trend",
-            {
-                "trend": trends.get("temperature_trend"),
-                "rate": trends.get("temperature_rate", 0),
-                "start": trends.get("temperature_start"),
-                "end": trends.get("temperature_end"),
-                "period_hours": trends.get("temperature_period_hours", 0),
-            },
+            alert_data,
             window_end,
         )
         alerts.append(alert_message)
     
     # Check for rapid humidity drop (>10% in 6 hours)
     if trends.get("humidity_trend") in ["decreasing_very_rapidly", "decreasing_rapidly"]:
+        alert_data = {
+            "trend": trends.get("humidity_trend"),
+            "change": trends.get("humidity_change", 0),
+            "start": trends.get("humidity_start"),
+            "end": trends.get("humidity_end"),
+            "period_hours": trends.get("humidity_period_hours", 0),
+        }
+        if plant_name:
+            alert_data["plantName"] = plant_name
         alert_message = _publish_alert(
             device_id,
             "unusual_humidity_trend",
-            {
-                "trend": trends.get("humidity_trend"),
-                "change": trends.get("humidity_change", 0),
-                "start": trends.get("humidity_start"),
-                "end": trends.get("humidity_end"),
-                "period_hours": trends.get("humidity_period_hours", 0),
-            },
+            alert_data,
             window_end,
         )
         alerts.append(alert_message)
     
     # Check for rapid light drop (>30% in 6 hours)
     if trends.get("light_trend") in ["decreasing_very_rapidly", "decreasing_rapidly"]:
+        alert_data = {
+            "trend": trends.get("light_trend"),
+            "change": trends.get("light_change", 0),
+            "start": trends.get("light_start"),
+            "end": trends.get("light_end"),
+            "period_hours": trends.get("light_period_hours", 0),
+        }
+        if plant_name:
+            alert_data["plantName"] = plant_name
         alert_message = _publish_alert(
             device_id,
             "unusual_light_trend",
-            {
-                "trend": trends.get("light_trend"),
-                "change": trends.get("light_change", 0),
-                "start": trends.get("light_start"),
-                "end": trends.get("light_end"),
-                "period_hours": trends.get("light_period_hours", 0),
-            },
+            alert_data,
             window_end,
         )
         alerts.append(alert_message)
@@ -371,7 +557,7 @@ def _analyze_trends_from_items(
     return trends
 
 
-def _check_water_tank_status(device_id: str, now: datetime) -> Optional[Dict[str, Any]]:
+def _check_water_tank_status(device_id: str, now: datetime, plant_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Check if water tank is empty and alert if needed."""
     # Get the latest telemetry reading
     window_start = now - timedelta(minutes=ENV_WINDOW_MINUTES)
@@ -421,13 +607,16 @@ def _check_water_tank_status(device_id: str, now: datetime) -> Optional[Dict[str
         
         # Alert if tank is empty (value is 1)
         if water_tank_empty == 1:
+            alert_data = {
+                "status": "empty",
+                "message": "Water tank is empty and requires refill",
+            }
+            if plant_name:
+                alert_data["plantName"] = plant_name
             return _publish_alert(
                 device_id,
                 "water_tank_empty",
-                {
-                    "status": "empty",
-                    "message": "Water tank is empty and requires refill",
-                },
+                alert_data,
                 now,
             )
     
@@ -467,26 +656,30 @@ def _publish_alert(
 ) -> Dict[str, Any]:
     """Publish alert to SNS with different message formats based on alert type."""
     
+    # Get plant name from alert_data if provided, otherwise fetch it
+    plant_name = alert_data.pop("plantName", None) or _get_plant_name(device_id)
+    
     if alert_type == "disease_detected":
-        subject = f"⚠️ Disease Detected: {device_id}"
-        body_text = _build_disease_alert_text(device_id, alert_data, now)
-        body_html = _build_disease_alert_html(device_id, alert_data, now)
+        subject = f"⚠️ Disease Detected: {plant_name}"
+        body_text = _build_disease_alert_text(plant_name, device_id, alert_data, now)
+        body_html = _build_disease_alert_html(plant_name, device_id, alert_data, now)
     elif alert_type.startswith("unusual_"):
         metric_name = alert_type.replace("unusual_", "").replace("_trend", "").replace("_", " ").title()
-        subject = f"🌡️ Unusual Trend Detected: {device_id} - {metric_name}"
-        body_text = _build_trend_alert_text(device_id, alert_type, alert_data, now)
-        body_html = _build_trend_alert_html(device_id, alert_type, alert_data, now)
+        subject = f"🌡️ Unusual Trend Detected: {plant_name} - {metric_name}"
+        body_text = _build_trend_alert_text(plant_name, device_id, alert_type, alert_data, now)
+        body_html = _build_trend_alert_html(plant_name, device_id, alert_type, alert_data, now)
     elif alert_type == "water_tank_empty":
-        subject = f"💧 Water Tank Empty: {device_id}"
-        body_text = _build_water_tank_alert_text(device_id, alert_data, now)
-        body_html = _build_water_tank_alert_html(device_id, alert_data, now)
+        subject = f"💧 Water Tank Empty: {plant_name}"
+        body_text = _build_water_tank_alert_text(plant_name, device_id, alert_data, now)
+        body_html = _build_water_tank_alert_html(plant_name, device_id, alert_data, now)
     else:
-        subject = f"Alert: {device_id}"
+        subject = f"Alert: {plant_name}"
         body_text = json.dumps(alert_data, indent=2)
         body_html = f"<pre>{json.dumps(alert_data, indent=2)}</pre>"
     
     payload = {
         "deviceId": device_id,
+        "plantName": plant_name,
         "alertType": alert_type,
         "alertData": alert_data,
         "evaluatedAt": now.isoformat(),
@@ -506,16 +699,18 @@ def _publish_alert(
     return message
 
 
-def _build_disease_alert_text(device_id: str, data: Dict[str, Any], now: datetime) -> str:
+def _build_disease_alert_text(plant_name: str, device_id: str, data: Dict[str, Any], now: datetime) -> str:
     """Build text body for disease detection alert."""
     lines = [
+        f"Plant: {plant_name}",
         f"Device ID: {device_id}",
+        f"",
         f"⚠️ DISEASE DETECTED",
         f"",
         f"Label: {data.get('label', 'disease')}",
     ]
     if data.get("diseaseRisk") is not None:
-        lines.append(f"Disease risk score: {data['diseaseRisk']:.2f}")
+        lines.append(f"Confidence: {data['diseaseRisk']:.1%}")
     if data.get("environmentAverages"):
         lines.append("")
         lines.append("Environmental averages (last 30 minutes):")
@@ -529,15 +724,16 @@ def _build_disease_alert_text(device_id: str, data: Dict[str, Any], now: datetim
     return "\n".join(lines)
 
 
-def _build_disease_alert_html(device_id: str, data: Dict[str, Any], now: datetime) -> str:
+def _build_disease_alert_html(plant_name: str, device_id: str, data: Dict[str, Any], now: datetime) -> str:
     """Build HTML body for disease detection alert."""
     parts = [
+        f"<p><strong>Plant:</strong> {plant_name}</p>",
         f"<p><strong>Device ID:</strong> {device_id}</p>",
         f'<p><strong style="color: red;">⚠️ DISEASE DETECTED</strong></p>',
         f"<p><strong>Label:</strong> {data.get('label', 'disease')}</p>",
     ]
     if data.get("diseaseRisk") is not None:
-        parts.append(f"<p><strong>Disease risk score:</strong> {data['diseaseRisk']:.2f}</p>")
+        parts.append(f"<p><strong>Confidence:</strong> {data['diseaseRisk']:.1%}</p>")
     if data.get("environmentAverages"):
         items = "".join(
             f"<li><strong>{metric}:</strong> {value:.2f}</li>"
@@ -555,11 +751,13 @@ def _build_disease_alert_html(device_id: str, data: Dict[str, Any], now: datetim
 
 
 
-def _build_trend_alert_text(device_id: str, alert_type: str, data: Dict[str, Any], now: datetime) -> str:
+def _build_trend_alert_text(plant_name: str, device_id: str, alert_type: str, data: Dict[str, Any], now: datetime) -> str:
     """Build text body for unusual trend alert."""
     metric_name = alert_type.replace("unusual_", "").replace("_trend", "").replace("_", " ").title()
     lines = [
+        f"Plant: {plant_name}",
         f"Device ID: {device_id}",
+        f"",
         f"🌡️ UNUSUAL {metric_name.upper()} TREND DETECTED",
         f"",
     ]
@@ -594,10 +792,11 @@ def _build_trend_alert_text(device_id: str, alert_type: str, data: Dict[str, Any
     return "\n".join(lines)
 
 
-def _build_trend_alert_html(device_id: str, alert_type: str, data: Dict[str, Any], now: datetime) -> str:
+def _build_trend_alert_html(plant_name: str, device_id: str, alert_type: str, data: Dict[str, Any], now: datetime) -> str:
     """Build HTML body for unusual trend alert."""
     metric_name = alert_type.replace("unusual_", "").replace("_trend", "").replace("_", " ").title()
     parts = [
+        f"<p><strong>Plant:</strong> {plant_name}</p>",
         f"<p><strong>Device ID:</strong> {device_id}</p>",
         f'<p><strong style="color: orange;">🌡️ UNUSUAL {metric_name.upper()} TREND DETECTED</strong></p>',
     ]
@@ -631,10 +830,12 @@ def _build_trend_alert_html(device_id: str, alert_type: str, data: Dict[str, Any
     return "".join(parts)
 
 
-def _build_water_tank_alert_text(device_id: str, data: Dict[str, Any], now: datetime) -> str:
+def _build_water_tank_alert_text(plant_name: str, device_id: str, data: Dict[str, Any], now: datetime) -> str:
     """Build text body for water tank empty alert."""
     lines = [
+        f"Plant: {plant_name}",
         f"Device ID: {device_id}",
+        f"",
         f"💧 WATER TANK EMPTY",
         f"",
         f"Status: {data.get('status', 'empty')}",
@@ -647,9 +848,10 @@ def _build_water_tank_alert_text(device_id: str, data: Dict[str, Any], now: date
     return "\n".join(lines)
 
 
-def _build_water_tank_alert_html(device_id: str, data: Dict[str, Any], now: datetime) -> str:
+def _build_water_tank_alert_html(plant_name: str, device_id: str, data: Dict[str, Any], now: datetime) -> str:
     """Build HTML body for water tank empty alert."""
     return f"""
+    <p><strong>Plant:</strong> {plant_name}</p>
     <p><strong>Device ID:</strong> {device_id}</p>
     <p><strong style="color: red;">💧 WATER TANK EMPTY</strong></p>
     <p><strong>Status:</strong> {data.get('status', 'empty')}</p>
