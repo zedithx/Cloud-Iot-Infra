@@ -1084,7 +1084,7 @@ def remove_scanned_plant(device_id: str) -> None:
         
         if timestamp_key_to_delete is None:
             # Try fallback: use hash-based timestamp key (for backward compatibility)
-            timestamp_key_int = _device_id_to_timestamp(device_id)
+        timestamp_key_int = _device_id_to_timestamp(device_id)
             timestamp_key_to_delete = str(timestamp_key_int)
             logger.warning("No record found with deviceId=%s in plantName, trying hash-based key: %s", 
                           device_id, timestamp_key_to_delete)

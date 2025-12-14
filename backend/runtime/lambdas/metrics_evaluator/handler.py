@@ -6,13 +6,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import boto3
 from boto3.dynamodb.conditions import Key
-from botocore.exceptions import ClientError
 
 DYNAMO_TABLE_NAME = os.environ["DYNAMO_TABLE_NAME"]
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
-DEFAULT_THRESHOLD = Decimal(os.environ.get("DEFAULT_THRESHOLD", "0.8"))
 ENV_WINDOW_MINUTES = int(os.environ.get("ENV_WINDOW_MINUTES", "30"))
-AUTOHEAL_CHECK_MINUTES = int(os.environ.get("AUTOHEAL_CHECK_MINUTES", "60"))  # Check last 60 min
 TREND_WINDOW_HOURS = int(os.environ.get("TREND_WINDOW_HOURS", "3"))  # 3 hours for trend detection
 
 dynamodb = boto3.resource("dynamodb")
@@ -21,7 +18,6 @@ sns_client = boto3.client("sns")
 
 TELEMETRY_READING = "telemetry"
 DISEASE_READING = "disease"
-CONFIG_TIMESTAMP = "CONFIG"
 
 ENVIRONMENT_KEYS = {
     "temperature": {"temperature", "temperatureC", "temperature_c"},
@@ -30,49 +26,23 @@ ENVIRONMENT_KEYS = {
     "lux": {"light_lux", "lightLux", "lux"},
 }
 
-# Threshold keys mapping
-THRESHOLD_KEYS = {
-    "soilMoisture": "soilMoistureThreshold",
-    "temperatureC": "temperatureCThreshold",
-    "lightLux": "lightLuxThreshold",
-}
 
 
 def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(minutes=ENV_WINDOW_MINUTES)
-    autoheal_window_start = now - timedelta(minutes=AUTOHEAL_CHECK_MINUTES)
     trend_window_start = now - timedelta(hours=TREND_WINDOW_HOURS)
     
     alerts: List[Dict[str, Any]] = []
     device_ids = _list_device_ids()
 
     for device_id in device_ids:
-        device_config = _load_device_config(device_id)
-        disease_threshold = device_config.get("diseaseThreshold") or DEFAULT_THRESHOLD
-        thresholds = device_config.get("thresholds", {})
+        # Check for disease label (triggers alert regardless of confidence/score)
+        disease_alert = _check_disease_label(device_id, window_start, now)
+        if disease_alert:
+            alerts.append(disease_alert)
         
-        # Check disease score (existing logic)
-        disease_score = _load_latest_disease_score(device_id)
-        if disease_score is not None and disease_score >= disease_threshold:
-            env_averages = _compute_environment_averages(device_id, window_start, now)
-            alert_message = _publish_alert(
-                device_id,
-                "disease_risk_high",
-                {
-                    "diseaseRisk": float(disease_score),
-                    "threshold": float(disease_threshold),
-                    "environmentAverages": env_averages,
-                },
-                now,
-            )
-            alerts.append(alert_message)
-        
-        # Check auto-heal failure: values consistently below threshold
-        autoheal_alerts = _check_autoheal_failure(device_id, thresholds, autoheal_window_start, now)
-        alerts.extend(autoheal_alerts)
-        
-        # Check unusual trends/weather changes
+        # Check unusual trends/spiking trends
         trend_alerts = _check_unusual_trends(device_id, trend_window_start, now)
         alerts.extend(trend_alerts)
         
@@ -104,30 +74,11 @@ def _list_device_ids() -> List[str]:
     return sorted(device_ids)
 
 
-def _load_device_config(device_id: str) -> Dict[str, Any]:
-    """Load device configuration including thresholds."""
-    try:
-        resp = table.get_item(Key={"deviceId": device_id, "timestamp": CONFIG_TIMESTAMP})
-        item = resp.get("Item")
-        if item:
-            return {
-                "diseaseThreshold": _to_decimal(item.get("threshold")),
-                "thresholds": {
-                    "soilMoisture": _to_decimal(item.get("soilMoistureThreshold")),
-                    "temperatureC": _to_decimal(item.get("temperatureCThreshold")),
-                    "lightLux": _to_decimal(item.get("lightLuxThreshold")),
-                },
-                "plantType": item.get("plantType"),
-            }
-    except ClientError:
-        pass
-    return {"diseaseThreshold": None, "thresholds": {}, "plantType": None}
 
 
-def _load_latest_disease_score(device_id: str) -> Optional[float]:
-    """Load the latest disease score for a device by querying all records and filtering by readingType."""
+def _check_disease_label(device_id: str, window_start: datetime, window_end: datetime) -> Optional[Dict[str, Any]]:
+    """Check if latest disease record has label='disease' and trigger alert regardless of confidence/score."""
     # Query all records for this device, then filter by readingType
-    # Since disease records now use TS# prefix like telemetry, we filter by readingType instead
     resp = table.query(
         KeyConditionExpression=Key("deviceId").eq(device_id),
         ScanIndexForward=False,
@@ -145,11 +96,42 @@ def _load_latest_disease_score(device_id: str) -> Optional[float]:
     
     # Get the latest disease record (already sorted by ScanIndexForward=False)
     latest = disease_items[0]
-    metrics = latest.get("metrics", {})
-    score = metrics.get("diseaseRisk")
-    if score is not None:
-        decimal_score = _to_decimal(score)
-        return float(decimal_score) if decimal_score is not None else None
+    
+    # Check for label field - can be in metrics, raw, or top-level
+    label = (
+        latest.get("label") or 
+        latest.get("metrics", {}).get("label") or 
+        latest.get("raw", {}).get("label") or
+        latest.get("metrics", {}).get("binary_prediction")
+    )
+    
+    # Convert binary_prediction to label format if needed
+    if label is None:
+        binary_pred = latest.get("metrics", {}).get("binary_prediction") or latest.get("raw", {}).get("binary_prediction")
+        if binary_pred:
+            label = "disease" if str(binary_pred).lower() != "healthy" else "healthy"
+    
+    # Trigger alert if label is "disease" (regardless of confidence/score)
+    if label and str(label).lower() == "disease":
+        metrics = latest.get("metrics", {})
+        score = metrics.get("diseaseRisk") or metrics.get("confidence")
+        disease_score = None
+        if score is not None:
+            decimal_score = _to_decimal(score)
+            disease_score = float(decimal_score) if decimal_score is not None else None
+        
+        env_averages = _compute_environment_averages(device_id, window_start, window_end)
+        return _publish_alert(
+            device_id,
+            "disease_detected",
+            {
+                "label": str(label),
+                "diseaseRisk": disease_score,
+                "environmentAverages": env_averages,
+            },
+            window_end,
+        )
+    
     return None
 
 
@@ -187,71 +169,6 @@ def _compute_environment_averages(
     return averages
 
 
-def _check_autoheal_failure(
-    device_id: str,
-    thresholds: Dict[str, Optional[Decimal]],
-    window_start: datetime,
-    window_end: datetime,
-) -> List[Dict[str, Any]]:
-    """Check if values are consistently below threshold (auto-heal failure)."""
-    alerts = []
-    
-    # Get telemetry data for the window
-    start_key = f"TS#{_timestamp_prefix(window_start, low=True)}"
-    end_key = f"TS#{_timestamp_prefix(window_end, low=False)}"
-    
-    resp = table.query(
-        KeyConditionExpression=Key("deviceId").eq(device_id)
-        & Key("timestamp").between(start_key, end_key),
-    )
-    
-    items = [item for item in resp.get("Items", []) if item.get("readingType") == TELEMETRY_READING]
-    if len(items) < 3:  # Need at least 3 readings to determine consistency
-        return alerts
-    
-    # Check each metric that has a threshold set
-    for metric_name, threshold_key in THRESHOLD_KEYS.items():
-        threshold = thresholds.get(metric_name)
-        if threshold is None:
-            continue
-        
-        # Find the alias for this metric
-        aliases = ENVIRONMENT_KEYS.get(metric_name, {})
-        below_threshold_count = 0
-        total_count = 0
-        values_below: List[float] = []
-        
-        for item in items:
-            metrics = item.get("metrics", {})
-            for alias in aliases:
-                if alias in metrics and metrics[alias] is not None:
-                    value = _to_decimal(metrics[alias])
-                    if value is not None:
-                        total_count += 1
-                        if value < threshold:
-                            below_threshold_count += 1
-                            values_below.append(float(value))
-                        break
-        
-        # If >80% of readings are below threshold, auto-heal is likely broken
-        if total_count >= 3 and below_threshold_count / total_count > 0.8:
-            avg_below = sum(values_below) / len(values_below) if values_below else 0
-            alert_message = _publish_alert(
-                device_id,
-                "autoheal_failure",
-                {
-                    "metric": metric_name,
-                    "threshold": float(threshold),
-                    "readingsBelowThreshold": below_threshold_count,
-                    "totalReadings": total_count,
-                    "averageValue": avg_below,
-                    "percentageBelow": (below_threshold_count / total_count) * 100,
-                },
-                window_end,
-            )
-            alerts.append(alert_message)
-    
-    return alerts
 
 
 def _check_unusual_trends(
@@ -550,14 +467,10 @@ def _publish_alert(
 ) -> Dict[str, Any]:
     """Publish alert to SNS with different message formats based on alert type."""
     
-    if alert_type == "disease_risk_high":
-        subject = f"⚠️ Disease Risk High: {device_id}"
+    if alert_type == "disease_detected":
+        subject = f"⚠️ Disease Detected: {device_id}"
         body_text = _build_disease_alert_text(device_id, alert_data, now)
         body_html = _build_disease_alert_html(device_id, alert_data, now)
-    elif alert_type == "autoheal_failure":
-        subject = f"🔧 Auto-heal Failure: {device_id} - {alert_data['metric']}"
-        body_text = _build_autoheal_alert_text(device_id, alert_data, now)
-        body_html = _build_autoheal_alert_html(device_id, alert_data, now)
     elif alert_type.startswith("unusual_"):
         metric_name = alert_type.replace("unusual_", "").replace("_trend", "").replace("_", " ").title()
         subject = f"🌡️ Unusual Trend Detected: {device_id} - {metric_name}"
@@ -594,29 +507,37 @@ def _publish_alert(
 
 
 def _build_disease_alert_text(device_id: str, data: Dict[str, Any], now: datetime) -> str:
-    """Build text body for disease risk alert."""
+    """Build text body for disease detection alert."""
     lines = [
         f"Device ID: {device_id}",
-        f"Disease risk score: {data['diseaseRisk']:.2f}",
-        f"Threshold: {data['threshold']:.2f}",
+        f"⚠️ DISEASE DETECTED",
+        f"",
+        f"Label: {data.get('label', 'disease')}",
     ]
+    if data.get("diseaseRisk") is not None:
+        lines.append(f"Disease risk score: {data['diseaseRisk']:.2f}")
     if data.get("environmentAverages"):
+        lines.append("")
         lines.append("Environmental averages (last 30 minutes):")
         for metric, value in data["environmentAverages"].items():
             lines.append(f"  - {metric}: {value:.2f}")
     else:
+        lines.append("")
         lines.append("Environmental averages unavailable during the evaluation window.")
+    lines.append("")
     lines.append(f"Evaluated at: {now.isoformat()}")
     return "\n".join(lines)
 
 
 def _build_disease_alert_html(device_id: str, data: Dict[str, Any], now: datetime) -> str:
-    """Build HTML body for disease risk alert."""
+    """Build HTML body for disease detection alert."""
     parts = [
         f"<p><strong>Device ID:</strong> {device_id}</p>",
-        f"<p><strong>Disease risk score:</strong> {data['diseaseRisk']:.2f}</p>",
-        f"<p><strong>Threshold:</strong> {data['threshold']:.2f}</p>",
+        f'<p><strong style="color: red;">⚠️ DISEASE DETECTED</strong></p>',
+        f"<p><strong>Label:</strong> {data.get('label', 'disease')}</p>",
     ]
+    if data.get("diseaseRisk") is not None:
+        parts.append(f"<p><strong>Disease risk score:</strong> {data['diseaseRisk']:.2f}</p>")
     if data.get("environmentAverages"):
         items = "".join(
             f"<li><strong>{metric}:</strong> {value:.2f}</li>"
@@ -632,39 +553,6 @@ def _build_disease_alert_html(device_id: str, data: Dict[str, Any], now: datetim
     return "".join(parts)
 
 
-def _build_autoheal_alert_text(device_id: str, data: Dict[str, Any], now: datetime) -> str:
-    """Build text body for auto-heal failure alert."""
-    lines = [
-        f"Device ID: {device_id}",
-        f"⚠️ AUTO-HEAL SYSTEM FAILURE DETECTED",
-        f"",
-        f"Metric: {data['metric']}",
-        f"Threshold: {data['threshold']:.2f}",
-        f"Readings below threshold: {data['readingsBelowThreshold']} / {data['totalReadings']}",
-        f"Percentage below: {data['percentageBelow']:.1f}%",
-        f"Average value: {data['averageValue']:.2f}",
-        f"",
-        f"This indicates the auto-heal system is not maintaining values above the threshold.",
-        f"Please check the device and actuator functionality.",
-        f"",
-        f"Evaluated at: {now.isoformat()}",
-    ]
-    return "\n".join(lines)
-
-
-def _build_autoheal_alert_html(device_id: str, data: Dict[str, Any], now: datetime) -> str:
-    """Build HTML body for auto-heal failure alert."""
-    return f"""
-    <p><strong>Device ID:</strong> {device_id}</p>
-    <p><strong style="color: red;">⚠️ AUTO-HEAL SYSTEM FAILURE DETECTED</strong></p>
-    <p><strong>Metric:</strong> {data['metric']}</p>
-    <p><strong>Threshold:</strong> {data['threshold']:.2f}</p>
-    <p><strong>Readings below threshold:</strong> {data['readingsBelowThreshold']} / {data['totalReadings']}</p>
-    <p><strong>Percentage below:</strong> {data['percentageBelow']:.1f}%</p>
-    <p><strong>Average value:</strong> {data['averageValue']:.2f}</p>
-    <p><em>This indicates the auto-heal system is not maintaining values above the threshold. Please check the device and actuator functionality.</em></p>
-    <p><strong>Evaluated at:</strong> {now.isoformat()}</p>
-    """
 
 
 def _build_trend_alert_text(device_id: str, alert_type: str, data: Dict[str, Any], now: datetime) -> str:
