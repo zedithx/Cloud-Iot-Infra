@@ -61,12 +61,13 @@ def _parse_message(sns_payload: Dict[str, Any]) -> tuple[str, str, Optional[str]
         subject = parsed.get("subject") or subject
         body_text = parsed.get("bodyText") or parsed.get("body") or body_text
         body_html = parsed.get("bodyHtml")
-
-        payload = parsed.get("payload")
-        if payload is not None:
-            pretty_payload = json.dumps(payload, indent=2, default=str)
-            body_text = _append_payload(body_text, pretty_payload)
-            body_html = _append_payload_html(body_html, pretty_payload)
+        
+        # Do not append payload JSON to client-facing emails
+        # payload = parsed.get("payload")
+        # if payload is not None:
+        #     pretty_payload = json.dumps(payload, indent=2, default=str)
+        #     body_text = _append_payload(body_text, pretty_payload)
+        #     body_html = _append_payload_html(body_html, pretty_payload)
 
     if not body_text:
         body_text = "(No message content provided.)"

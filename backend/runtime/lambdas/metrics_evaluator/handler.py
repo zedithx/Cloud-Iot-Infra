@@ -11,6 +11,8 @@ DYNAMO_TABLE_NAME = os.environ["DYNAMO_TABLE_NAME"]
 SNS_TOPIC_ARN = os.environ["SNS_TOPIC_ARN"]
 ENV_WINDOW_MINUTES = int(os.environ.get("ENV_WINDOW_MINUTES", "30"))
 TREND_WINDOW_HOURS = int(os.environ.get("TREND_WINDOW_HOURS", "3"))  # 3 hours for trend detection
+ALERT_COOLDOWN_HOURS = int(os.environ.get("ALERT_COOLDOWN_HOURS", "24"))  # 24 hours cooldown between same alerts
+MAX_ALERT_COUNT = int(os.environ.get("MAX_ALERT_COUNT", "3"))  # Maximum 3 alerts per alert type per device
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(DYNAMO_TABLE_NAME)
@@ -45,8 +47,12 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     new_states: Dict[str, Dict[str, bool]] = {}
 
     for device_id in device_ids:
-        # Skip USER_PLANTS device ID itself
-        if device_id == USER_PLANTS_DEVICE_ID:
+        # Skip system device IDs
+        if device_id in [USER_PLANTS_DEVICE_ID, "ALERT_STATES", "ALERT_TRACKING"]:
+            continue
+        
+        # Skip device IDs that are disease-related (safety check)
+        if device_id.lower() in ["disease", "diseased", "healthy"]:
             continue
             
         plant_name = _get_plant_name(device_id)
@@ -134,9 +140,14 @@ def _get_plant_name(device_id: str) -> str:
             if "|" in plant_name_full:
                 parts = plant_name_full.split("|", 1)
                 if len(parts) >= 1 and parts[0] == device_id:
-                    # Found the plant name
-                    if len(parts) >= 2 and parts[1]:
-                        return parts[1]
+                    # Found the plant name - extract the part after the pipe
+                    if len(parts) >= 2 and parts[1] and parts[1].strip():
+                        plant_name = parts[1].strip()
+                        # Safety check: ensure we're not returning disease-related values
+                        if plant_name.lower() not in ["disease", "diseased", "healthy"]:
+                            return plant_name
+                        # If somehow it is, fallback to device_id
+                        return device_id
                     return device_id  # Fallback if name is empty
         
         # Not found in USER_PLANTS, return device ID
@@ -191,25 +202,17 @@ def _publish_resolution(device_id: str, plant_name: str, alert_type: str, now: d
     label = alert_type_labels.get(alert_type, alert_type.replace("_", " ").title())
     subject = f"✅ Resolved: {label} - {plant_name}"
     
-    body_text = f"""Plant: {plant_name}
-Device ID: {device_id}
+    body_text = f"""✅ ALERT RESOLVED
 
-✅ ALERT RESOLVED
+The {label.lower()} condition for your plant '{plant_name}' has been cleared.
 
-The {label.lower()} condition has been cleared.
-
-The plant is now back to normal operating conditions.
-
-Resolved at: {now.isoformat()}
+Your plant is now back to normal operating conditions.
 """
     
     body_html = f"""
-    <p><strong>Plant:</strong> {plant_name}</p>
-    <p><strong>Device ID:</strong> {device_id}</p>
-    <p><strong style="color: green;">✅ ALERT RESOLVED</strong></p>
-    <p>The {label.lower()} condition has been cleared.</p>
-    <p>The plant is now back to normal operating conditions.</p>
-    <p><strong>Resolved at:</strong> {now.isoformat()}</p>
+    <p><strong style="color: green; font-size: 18px;">✅ ALERT RESOLVED</strong></p>
+    <p>The {label.lower()} condition for your plant <strong>{plant_name}</strong> has been cleared.</p>
+    <p>Your plant is now back to normal operating conditions.</p>
     """
     
     payload = {
@@ -231,6 +234,10 @@ Resolved at: {now.isoformat()}
         TopicArn=SNS_TOPIC_ARN,
         Message=json.dumps(message),
     )
+    
+    # Record that alert was sent
+    _record_alert_sent(device_id, alert_type, now)
+    
     return message
 
 
@@ -294,13 +301,16 @@ def _check_disease_label(device_id: str, window_start: datetime, window_end: dat
             disease_score = float(decimal_score) if decimal_score is not None else None
         
         env_averages = _compute_environment_averages(device_id, window_start, window_end)
+        
+        # Get plant name if not provided - ensure we always have it
+        actual_plant_name = plant_name if plant_name else _get_plant_name(device_id)
+        
         alert_data = {
             "label": str(label),
             "diseaseRisk": disease_score,
             "environmentAverages": env_averages,
+            "plantName": actual_plant_name,  # Always include plant name
         }
-        if plant_name:
-            alert_data["plantName"] = plant_name
         return _publish_alert(
             device_id,
             "disease_detected",
@@ -648,13 +658,96 @@ def _parse_timestamp_from_item(timestamp_str: str) -> Optional[datetime]:
             return None
 
 
+def _should_send_alert(device_id: str, alert_type: str, now: datetime) -> bool:
+    """Check if alert should be sent based on cooldown and max count."""
+    try:
+        # Query alert tracking records for this device and alert type
+        alert_key = f"ALERT_{alert_type}_{device_id}"
+        response = table.get_item(
+            Key={
+                "deviceId": "ALERT_TRACKING",
+                "timestamp": alert_key,
+            }
+        )
+        
+        if "Item" not in response:
+            # No previous alert sent - allow it
+            return True
+        
+        item = response["Item"]
+        sent_count = item.get("count", 0)
+        last_sent = item.get("lastSent")
+        
+        # Check max count limit
+        if sent_count >= MAX_ALERT_COUNT:
+            return False
+        
+        # Check cooldown period
+        if last_sent:
+            try:
+                # Parse ISO format timestamp
+                last_sent_dt = datetime.fromisoformat(last_sent.replace("Z", "+00:00"))
+                if last_sent_dt.tzinfo is None:
+                    last_sent_dt = last_sent_dt.replace(tzinfo=timezone.utc)
+                
+                hours_since_last = (now - last_sent_dt).total_seconds() / 3600
+                if hours_since_last < ALERT_COOLDOWN_HOURS:
+                    # Still in cooldown period
+                    return False
+            except (ValueError, TypeError):
+                # If parsing fails, allow the alert (better to send than miss)
+                pass
+        
+        return True
+    except Exception:
+        # On any error, allow the alert (fail open)
+        return True
+
+
+def _record_alert_sent(device_id: str, alert_type: str, now: datetime) -> None:
+    """Record that an alert was sent for tracking purposes."""
+    try:
+        alert_key = f"ALERT_{alert_type}_{device_id}"
+        
+        # Get current count
+        response = table.get_item(
+            Key={
+                "deviceId": "ALERT_TRACKING",
+                "timestamp": alert_key,
+            }
+        )
+        
+        current_count = 0
+        if "Item" in response:
+            current_count = response["Item"].get("count", 0)
+        
+        # Update or create alert tracking record
+        table.put_item(
+            Item={
+                "deviceId": "ALERT_TRACKING",
+                "timestamp": alert_key,
+                "count": current_count + 1,
+                "lastSent": now.isoformat(),
+                "deviceId_ref": device_id,  # For easier querying
+                "alertType": alert_type,
+            }
+        )
+    except Exception:
+        # Fail silently - tracking is best effort
+        pass
+
+
 def _publish_alert(
     device_id: str,
     alert_type: str,
     alert_data: Dict[str, Any],
     now: datetime,
-) -> Dict[str, Any]:
+) -> Optional[Dict[str, Any]]:
     """Publish alert to SNS with different message formats based on alert type."""
+    
+    # Check if we should send this alert (rate limiting)
+    if not _should_send_alert(device_id, alert_type, now):
+        return None
     
     # Get plant name from alert_data if provided, otherwise fetch it
     plant_name = alert_data.pop("plantName", None) or _get_plant_name(device_id)
@@ -674,8 +767,8 @@ def _publish_alert(
         body_html = _build_water_tank_alert_html(plant_name, device_id, alert_data, now)
     else:
         subject = f"Alert: {plant_name}"
-        body_text = json.dumps(alert_data, indent=2)
-        body_html = f"<pre>{json.dumps(alert_data, indent=2)}</pre>"
+        body_text = f"An alert has been triggered for your plant '{plant_name}'."
+        body_html = f"<p>An alert has been triggered for your plant <strong>{plant_name}</strong>.</p>"
     
     payload = {
         "deviceId": device_id,
@@ -696,56 +789,38 @@ def _publish_alert(
         TopicArn=SNS_TOPIC_ARN,
         Message=json.dumps(message),
     )
+    
+    # Record that alert was sent
+    _record_alert_sent(device_id, alert_type, now)
+    
     return message
 
 
 def _build_disease_alert_text(plant_name: str, device_id: str, data: Dict[str, Any], now: datetime) -> str:
     """Build text body for disease detection alert."""
     lines = [
-        f"Plant: {plant_name}",
-        f"Device ID: {device_id}",
-        f"",
         f"⚠️ DISEASE DETECTED",
         f"",
-        f"Label: {data.get('label', 'disease')}",
+        f"Your plant '{plant_name}' has been detected with a disease.",
     ]
     if data.get("diseaseRisk") is not None:
-        lines.append(f"Confidence: {data['diseaseRisk']:.1%}")
-    if data.get("environmentAverages"):
-        lines.append("")
-        lines.append("Environmental averages (last 30 minutes):")
-        for metric, value in data["environmentAverages"].items():
-            lines.append(f"  - {metric}: {value:.2f}")
-    else:
-        lines.append("")
-        lines.append("Environmental averages unavailable during the evaluation window.")
+        confidence_pct = int(data['diseaseRisk'] * 100)
+        lines.append(f"Detection confidence: {confidence_pct}%")
     lines.append("")
-    lines.append(f"Evaluated at: {now.isoformat()}")
+    lines.append("Please check your plant and consider isolating it to prevent spread to other plants.")
     return "\n".join(lines)
 
 
 def _build_disease_alert_html(plant_name: str, device_id: str, data: Dict[str, Any], now: datetime) -> str:
     """Build HTML body for disease detection alert."""
     parts = [
-        f"<p><strong>Plant:</strong> {plant_name}</p>",
-        f"<p><strong>Device ID:</strong> {device_id}</p>",
-        f'<p><strong style="color: red;">⚠️ DISEASE DETECTED</strong></p>',
-        f"<p><strong>Label:</strong> {data.get('label', 'disease')}</p>",
+        f'<p><strong style="color: red; font-size: 18px;">⚠️ DISEASE DETECTED</strong></p>',
+        f"<p>Your plant <strong>{plant_name}</strong> has been detected with a disease.</p>",
     ]
     if data.get("diseaseRisk") is not None:
-        parts.append(f"<p><strong>Confidence:</strong> {data['diseaseRisk']:.1%}</p>")
-    if data.get("environmentAverages"):
-        items = "".join(
-            f"<li><strong>{metric}:</strong> {value:.2f}</li>"
-            for metric, value in data["environmentAverages"].items()
-        )
-        parts.append("<p><strong>Environmental averages (last 30 minutes):</strong></p>")
-        parts.append(f"<ul>{items}</ul>")
-    else:
-        parts.append(
-            "<p><strong>Environmental averages:</strong> Unavailable during the evaluation window.</p>"
-        )
-    parts.append(f"<p><strong>Evaluated at:</strong> {now.isoformat()}</p>")
+        confidence_pct = int(data['diseaseRisk'] * 100)
+        parts.append(f"<p><strong>Detection confidence:</strong> {confidence_pct}%</p>")
+    parts.append("<p>Please check your plant and consider isolating it to prevent spread to other plants.</p>")
     return "".join(parts)
 
 
@@ -755,40 +830,29 @@ def _build_trend_alert_text(plant_name: str, device_id: str, alert_type: str, da
     """Build text body for unusual trend alert."""
     metric_name = alert_type.replace("unusual_", "").replace("_trend", "").replace("_", " ").title()
     lines = [
-        f"Plant: {plant_name}",
-        f"Device ID: {device_id}",
-        f"",
         f"🌡️ UNUSUAL {metric_name.upper()} TREND DETECTED",
+        f"",
+        f"Your plant '{plant_name}' is experiencing rapid changes in {metric_name.lower()}.",
         f"",
     ]
     
     if "temperature" in alert_type:
-        lines.extend([
-            f"Trend: {data.get('trend', 'unknown')}",
-            f"Rate of change: {data.get('rate', 0):.1f}°C/hour",
-            f"Temperature change: {data.get('start', 0):.1f}°C → {data.get('end', 0):.1f}°C",
-            f"Time period: {data.get('period_hours', 0):.1f} hours",
-        ])
+        start_temp = data.get('start', 0)
+        end_temp = data.get('end', 0)
+        lines.append(f"Temperature changed from {start_temp:.1f}°C to {end_temp:.1f}°C.")
     elif "humidity" in alert_type:
-        lines.extend([
-            f"Trend: {data.get('trend', 'unknown')}",
-            f"Humidity change: {data.get('start', 0):.1f}% → {data.get('end', 0):.1f}%",
-            f"Change: {data.get('change', 0):.1f}%",
-            f"Time period: {data.get('period_hours', 0):.1f} hours",
-        ])
+        start_humidity = data.get('start', 0)
+        end_humidity = data.get('end', 0)
+        change = data.get('change', 0)
+        lines.append(f"Humidity changed from {start_humidity:.0f}% to {end_humidity:.0f}% ({abs(change):.0f}% change).")
     elif "light" in alert_type:
-        lines.extend([
-            f"Trend: {data.get('trend', 'unknown')}",
-            f"Light change: {data.get('start', 0):.0f} lux → {data.get('end', 0):.0f} lux",
-            f"Change: {data.get('change', 0):.1f}%",
-            f"Time period: {data.get('period_hours', 0):.1f} hours",
-        ])
+        start_light = data.get('start', 0)
+        end_light = data.get('end', 0)
+        change = data.get('change', 0)
+        lines.append(f"Light intensity changed from {start_light:.0f} lux to {end_light:.0f} lux ({abs(change):.0f}% change).")
     
-    lines.extend([
-        f"",
-        f"This rapid change may require manual intervention or threshold adjustment.",
-        f"Evaluated at: {now.isoformat()}",
-    ])
+    lines.append("")
+    lines.append("Please check your plant's environment and adjust conditions if needed.")
     return "\n".join(lines)
 
 
@@ -796,54 +860,37 @@ def _build_trend_alert_html(plant_name: str, device_id: str, alert_type: str, da
     """Build HTML body for unusual trend alert."""
     metric_name = alert_type.replace("unusual_", "").replace("_trend", "").replace("_", " ").title()
     parts = [
-        f"<p><strong>Plant:</strong> {plant_name}</p>",
-        f"<p><strong>Device ID:</strong> {device_id}</p>",
-        f'<p><strong style="color: orange;">🌡️ UNUSUAL {metric_name.upper()} TREND DETECTED</strong></p>',
+        f'<p><strong style="color: orange; font-size: 18px;">🌡️ UNUSUAL {metric_name.upper()} TREND DETECTED</strong></p>',
+        f"<p>Your plant <strong>{plant_name}</strong> is experiencing rapid changes in {metric_name.lower()}.</p>",
     ]
     
     if "temperature" in alert_type:
-        parts.extend([
-            f"<p><strong>Trend:</strong> {data.get('trend', 'unknown')}</p>",
-            f"<p><strong>Rate of change:</strong> {data.get('rate', 0):.1f}°C/hour</p>",
-            f"<p><strong>Temperature change:</strong> {data.get('start', 0):.1f}°C → {data.get('end', 0):.1f}°C</p>",
-            f"<p><strong>Time period:</strong> {data.get('period_hours', 0):.1f} hours</p>",
-        ])
+        start_temp = data.get('start', 0)
+        end_temp = data.get('end', 0)
+        parts.append(f"<p><strong>Temperature changed:</strong> {start_temp:.1f}°C → {end_temp:.1f}°C</p>")
     elif "humidity" in alert_type:
-        parts.extend([
-            f"<p><strong>Trend:</strong> {data.get('trend', 'unknown')}</p>",
-            f"<p><strong>Humidity change:</strong> {data.get('start', 0):.1f}% → {data.get('end', 0):.1f}%</p>",
-            f"<p><strong>Change:</strong> {data.get('change', 0):.1f}%</p>",
-            f"<p><strong>Time period:</strong> {data.get('period_hours', 0):.1f} hours</p>",
-        ])
+        start_humidity = data.get('start', 0)
+        end_humidity = data.get('end', 0)
+        change = data.get('change', 0)
+        parts.append(f"<p><strong>Humidity changed:</strong> {start_humidity:.0f}% → {end_humidity:.0f}% ({abs(change):.0f}% change)</p>")
     elif "light" in alert_type:
-        parts.extend([
-            f"<p><strong>Trend:</strong> {data.get('trend', 'unknown')}</p>",
-            f"<p><strong>Light change:</strong> {data.get('start', 0):.0f} lux → {data.get('end', 0):.0f} lux</p>",
-            f"<p><strong>Change:</strong> {data.get('change', 0):.1f}%</p>",
-            f"<p><strong>Time period:</strong> {data.get('period_hours', 0):.1f} hours</p>",
-        ])
+        start_light = data.get('start', 0)
+        end_light = data.get('end', 0)
+        change = data.get('change', 0)
+        parts.append(f"<p><strong>Light intensity changed:</strong> {start_light:.0f} lux → {end_light:.0f} lux ({abs(change):.0f}% change)</p>")
     
-    parts.extend([
-        f"<p><em>This rapid change may require manual intervention or threshold adjustment.</em></p>",
-        f"<p><strong>Evaluated at:</strong> {now.isoformat()}</p>",
-    ])
+    parts.append("<p>Please check your plant's environment and adjust conditions if needed.</p>")
     return "".join(parts)
 
 
 def _build_water_tank_alert_text(plant_name: str, device_id: str, data: Dict[str, Any], now: datetime) -> str:
     """Build text body for water tank empty alert."""
     lines = [
-        f"Plant: {plant_name}",
-        f"Device ID: {device_id}",
-        f"",
         f"💧 WATER TANK EMPTY",
         f"",
-        f"Status: {data.get('status', 'empty')}",
-        f"Message: {data.get('message', 'Water tank is empty and requires refill')}",
+        f"The water tank for your plant '{plant_name}' is empty and needs to be refilled.",
         f"",
-        f"Please refill the water tank to ensure the auto-heal system can function properly.",
-        f"",
-        f"Evaluated at: {now.isoformat()}",
+        f"Please refill the water tank so the automatic watering system can continue to function properly.",
     ]
     return "\n".join(lines)
 
@@ -851,13 +898,9 @@ def _build_water_tank_alert_text(plant_name: str, device_id: str, data: Dict[str
 def _build_water_tank_alert_html(plant_name: str, device_id: str, data: Dict[str, Any], now: datetime) -> str:
     """Build HTML body for water tank empty alert."""
     return f"""
-    <p><strong>Plant:</strong> {plant_name}</p>
-    <p><strong>Device ID:</strong> {device_id}</p>
-    <p><strong style="color: red;">💧 WATER TANK EMPTY</strong></p>
-    <p><strong>Status:</strong> {data.get('status', 'empty')}</p>
-    <p><strong>Message:</strong> {data.get('message', 'Water tank is empty and requires refill')}</p>
-    <p><em>Please refill the water tank to ensure the auto-heal system can function properly.</em></p>
-    <p><strong>Evaluated at:</strong> {now.isoformat()}</p>
+    <p><strong style="color: red; font-size: 18px;">💧 WATER TANK EMPTY</strong></p>
+    <p>The water tank for your plant <strong>{plant_name}</strong> is empty and needs to be refilled.</p>
+    <p>Please refill the water tank so the automatic watering system can continue to function properly.</p>
     """
 
 
