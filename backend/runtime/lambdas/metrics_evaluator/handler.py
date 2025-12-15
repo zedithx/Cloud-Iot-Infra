@@ -47,12 +47,8 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     new_states: Dict[str, Dict[str, bool]] = {}
 
     for device_id in device_ids:
-        # Skip system device IDs
+        # Skip system device IDs only
         if device_id in [USER_PLANTS_DEVICE_ID, "ALERT_STATES", "ALERT_TRACKING"]:
-            continue
-        
-        # Skip device IDs that are disease-related (safety check)
-        if device_id.lower() in ["disease", "diseased", "healthy"]:
             continue
             
         plant_name = _get_plant_name(device_id)
@@ -745,9 +741,7 @@ def _publish_alert(
 ) -> Optional[Dict[str, Any]]:
     """Publish alert to SNS with different message formats based on alert type."""
     
-    # Check if we should send this alert (rate limiting)
-    if not _should_send_alert(device_id, alert_type, now):
-        return None
+    # Deduplication removed - alerts will always be sent
     
     # Get plant name from alert_data if provided, otherwise fetch it
     plant_name = alert_data.pop("plantName", None) or _get_plant_name(device_id)
@@ -790,8 +784,7 @@ def _publish_alert(
         Message=json.dumps(message),
     )
     
-    # Record that alert was sent
-    _record_alert_sent(device_id, alert_type, now)
+    # Alert tracking removed - no longer recording sent alerts
     
     return message
 

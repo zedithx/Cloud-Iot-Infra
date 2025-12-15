@@ -166,7 +166,7 @@ def invoke_batch_inference(lambda_client, function_name: str, prefix: str, folde
 
 def main():
     # Default folder paths (edit these as needed)
-    DEFAULT_DISEASED_FOLDER = "photos/20251203T16/"
+    DEFAULT_DISEASED_FOLDER = "photos/20251204T06/"
     DEFAULT_NON_DISEASED_FOLDER = "photos/20251203T19/"
     
     parser = argparse.ArgumentParser(

@@ -44,6 +44,7 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
 
         for prediction in _read_object_lines(bucket, key):
             filename = prediction.get("filename")
+            s3_key = prediction.get("s3_key")  # Full S3 key from batch inference
             binary_prediction = prediction.get("binary_prediction")
             class_name = prediction.get("class_name")
             confidence = Decimal(str(prediction.get("confidence", 0.0)))
@@ -52,7 +53,16 @@ def lambda_handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
                 logger.warning(f"Skipping invalid record: {prediction}")
                 continue
 
-            device_id = filename.split(".")[0]  # Assuming filename is {device_id}.jpg
+            # Extract deviceId from S3 key path: photos/{timestamp}/{device_id}.jpg
+            # Fallback to filename if s3_key not available (backward compatibility)
+            if s3_key:
+                # Extract filename from full S3 key path
+                s3_filename = s3_key.split("/")[-1]
+                device_id = s3_filename.rsplit(".", 1)[0]  # Remove extension
+            else:
+                # Fallback: extract from filename (backward compatibility)
+                device_id = filename.split(".")[0]
+                logger.warning(f"Using filename-based deviceId extraction for {filename}. Consider updating batch_inference to include s3_key.")
             
             # Use same timestamp format as telemetry: TS#{YYYYMMDDTHHMMSSZ}-{suffix}
             now = datetime.now(timezone.utc)

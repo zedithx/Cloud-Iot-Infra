@@ -136,7 +136,8 @@ def lambda_handler(event, context):
         )
 
         results.append(json.dumps({
-            "filename": key.split("/")[-1],
+            "filename": key.split("/")[-1],  # Keep filename for backward compatibility
+            "s3_key": key,  # Include full S3 key to extract deviceId
             "class_idx": idx,
             "class_name": class_name,
             "binary_prediction": binary_prediction,
